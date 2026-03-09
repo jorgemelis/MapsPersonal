@@ -1,0 +1,21 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# MBTiles data (large, downloaded separately)
+data/*.mbtiles
+MapsPersonal/Resources/*.mbtiles
+
+# OS
+.DS_Store
