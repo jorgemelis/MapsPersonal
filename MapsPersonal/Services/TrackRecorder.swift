@@ -38,18 +38,36 @@ class TrackRecorder {
     func saveTrack() -> GPXTrack? {
         guard let track = currentTrack, !track.points.isEmpty else { return nil }
 
-        // Export to GPX file
+        // Export to GPX file in Documents
         let gpxString = GPXExporter.export(track: track)
         let fileName = "\(track.name).gpx"
 
         if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             let fileURL = docsURL.appendingPathComponent(fileName)
             try? gpxString.write(to: fileURL, atomically: true, encoding: .utf8)
+            lastSavedFileURL = fileURL
         }
 
         let saved = track
         currentTrack = nil
         return saved
+    }
+
+    /// URL of the last saved GPX file (for sharing)
+    var lastSavedFileURL: URL?
+
+    /// List all saved GPX files in Documents
+    static func savedFiles() -> [URL] {
+        guard let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return [] }
+        let files = (try? FileManager.default.contentsOfDirectory(at: docsURL, includingPropertiesForKeys: [.creationDateKey], options: .skipsHiddenFiles)) ?? []
+        return files
+            .filter { $0.pathExtension.lowercased() == "gpx" }
+            .sorted { ($0.lastPathComponent) > ($1.lastPathComponent) }
+    }
+
+    /// Delete a saved GPX file
+    static func deleteFile(at url: URL) {
+        try? FileManager.default.removeItem(at: url)
     }
 
     func discardTrack() {

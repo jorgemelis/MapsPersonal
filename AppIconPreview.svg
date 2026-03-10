@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Background: soft topo green gradient -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#4A9B6E"/>
+      <stop offset="100%" stop-color="#2D7A4F"/>
+    </linearGradient>
+    <linearGradient id="contour" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3D8760" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#2A6B45" stop-opacity="0.4"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+
+  <!-- Topo contour lines (decorative) -->
+  <ellipse cx="512" cy="580" rx="420" ry="200" fill="none" stroke="#5DB882" stroke-width="3" opacity="0.35"/>
+  <ellipse cx="512" cy="560" rx="350" ry="170" fill="none" stroke="#5DB882" stroke-width="3" opacity="0.3"/>
+  <ellipse cx="512" cy="540" rx="280" ry="140" fill="none" stroke="#5DB882" stroke-width="2.5" opacity="0.25"/>
+  <ellipse cx="512" cy="520" rx="210" ry="110" fill="none" stroke="#5DB882" stroke-width="2" opacity="0.2"/>
+  <ellipse cx="512" cy="500" rx="140" ry="80" fill="none" stroke="#5DB882" stroke-width="2" opacity="0.15"/>
+
+  <!-- Dog (leading, pulling ahead) - simplified silhouette -->
+  <g transform="translate(280, 520)" fill="white">
+    <!-- Body -->
+    <ellipse cx="60" cy="40" rx="55" ry="25"/>
+    <!-- Head -->
+    <ellipse cx="120" cy="20" rx="22" ry="18"/>
+    <!-- Snout -->
+    <ellipse cx="142" cy="24" rx="12" ry="8"/>
+    <!-- Ear -->
+    <path d="M108,8 L100,-12 L118,4 Z"/>
+    <!-- Tail (up, happy) -->
+    <path d="M5,30 Q-15,0 -10,-20" stroke="white" stroke-width="8" fill="none" stroke-linecap="round"/>
+    <!-- Front legs -->
+    <line x1="95" y1="60" x2="105" y2="100" stroke="white" stroke-width="10" stroke-linecap="round"/>
+    <line x1="75" y1="60" x2="65" y2="100" stroke="white" stroke-width="10" stroke-linecap="round"/>
+    <!-- Back legs -->
+    <line x1="30" y1="58" x2="20" y2="100" stroke="white" stroke-width="10" stroke-linecap="round"/>
+    <line x1="45" y1="58" x2="55" y2="100" stroke="white" stroke-width="10" stroke-linecap="round"/>
+    <!-- Eye -->
+    <circle cx="128" cy="16" r="3" fill="#2D7A4F"/>
+  </g>
+
+  <!-- Leash -->
+  <path d="M395,555 Q450,500 520,530" stroke="white" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Woman (being pulled by dog) - simplified silhouette -->
+  <g transform="translate(500, 380)" fill="white">
+    <!-- Head -->
+    <circle cx="40" cy="0" r="28"/>
+    <!-- Hair (ponytail) -->
+    <path d="M55,-10 Q80,-20 75,15 Q70,30 60,20" fill="white"/>
+    <!-- Body/torso -->
+    <path d="M25,25 L20,120 L60,120 L55,25 Z"/>
+    <!-- Arm reaching forward (holding leash) -->
+    <path d="M28,40 L-5,100 L5,105 L35,50" fill="white"/>
+    <!-- Other arm -->
+    <path d="M55,45 L70,100 L62,103 L50,55" fill="white"/>
+    <!-- Skirt/legs area -->
+    <path d="M15,115 L5,230 L18,230 L30,150 L42,230 L55,230 L48,115 Z"/>
+    <!-- Feet -->
+    <ellipse cx="10" cy="232" rx="14" ry="6"/>
+    <ellipse cx="50" cy="232" rx="14" ry="6"/>
+  </g>
+
+  <!-- Small location pin accent -->
+  <g transform="translate(780, 180)">
+    <path d="M0,-40 C-22,-40 -35,-20 -35,0 C-35,25 0,55 0,55 C0,55 35,25 35,0 C35,-20 22,-40 0,-40 Z" fill="white" opacity="0.3"/>
+    <circle cx="0" cy="-5" r="12" fill="white" opacity="0.3"/>
+  </g>
+</svg>

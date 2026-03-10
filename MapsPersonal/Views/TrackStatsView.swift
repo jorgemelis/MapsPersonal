@@ -140,6 +140,106 @@ struct TrackStatsView: View {
     }
 }
 
+// MARK: - Compact Stats (one-line with integrated stop button)
+
+struct TrackStatsCompactView: View {
+    let recorder: TrackRecorder
+    var onStop: (() -> Void)? = nil
+    var onSave: (() -> Void)? = nil
+    var onDiscard: (() -> Void)? = nil
+
+    @State private var showDiscardAlert = false
+
+    var body: some View {
+        let track = recorder.currentTrack
+
+        HStack(spacing: 8) {
+            if recorder.isRecording {
+                // Recording: dot + stats + stop
+                Circle()
+                    .fill(.red)
+                    .frame(width: 8, height: 8)
+
+                Text(formatDuration(track?.duration ?? 0))
+                Text(formatDistance(track?.totalDistance ?? 0))
+                Text(formatElevation(track?.elevationGain))
+
+                Spacer()
+
+                Button {
+                    onStop?()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .padding(6)
+                        .background(.red.opacity(0.15), in: Circle())
+                }
+            } else if recorder.currentTrack != nil {
+                // Stopped: summary + save/discard
+                Text("\(recorder.pointCount) pts")
+                Text(formatDistance(track?.totalDistance ?? 0))
+                Text(formatElevation(track?.elevationGain))
+
+                Spacer()
+
+                Button {
+                    onSave?()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                        .padding(6)
+                        .background(.green.opacity(0.15), in: Circle())
+                }
+
+                Button {
+                    showDiscardAlert = true
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .padding(6)
+                        .background(.red.opacity(0.15), in: Circle())
+                }
+            }
+        }
+        .font(.system(.caption, design: .monospaced))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .alert("Descartar track", isPresented: $showDiscardAlert) {
+            Button("Descartar", role: .destructive) {
+                onDiscard?()
+            }
+            Button("Cancelar", role: .cancel) {}
+        } message: {
+            Text("¿Seguro? Se perderá el track grabado.")
+        }
+    }
+
+    private func formatDistance(_ meters: Double) -> String {
+        if meters >= 1000 {
+            return String(format: "%.1fkm", meters / 1000)
+        }
+        return String(format: "%.0fm", meters)
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds)
+        let h = s / 3600
+        let m = (s % 3600) / 60
+        let sec = s % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, sec) }
+        return String(format: "%02d:%02d", m, sec)
+    }
+
+    private func formatElevation(_ meters: Double?) -> String {
+        guard let m = meters else { return "+--m" }
+        return String(format: "+%.0fm", m)
+    }
+}
+
 // MARK: - Stat Cell
 
 struct StatCell: View {

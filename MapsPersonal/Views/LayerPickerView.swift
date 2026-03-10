@@ -26,6 +26,33 @@ struct LayerPickerView: View {
                     }
                 }
 
+                // Terrain layers
+                Section("Terreno") {
+                    VStack {
+                        Toggle("Hillshade (relieve)", isOn: $mapState.showHillshade)
+                        if mapState.showHillshade {
+                            HStack {
+                                Text("Intensidad")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Slider(value: $mapState.hillshadeOpacity, in: 0.1...1.0)
+                            }
+                        }
+                    }
+
+                    VStack {
+                        Toggle("Curvas de nivel", isOn: $mapState.showContours)
+                        if mapState.showContours {
+                            HStack {
+                                Text("Opacidad")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Slider(value: $mapState.contourOpacity, in: 0.1...1.0)
+                            }
+                        }
+                    }
+                }
+
                 // Overlay layers (toggleable)
                 Section("Capas superpuestas") {
                     ForEach(MapLayer.overlayLayers) { layer in

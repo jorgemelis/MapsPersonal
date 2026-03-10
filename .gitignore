@@ -17,5 +17,8 @@ __pycache__/
 data/*.mbtiles
 MapsPersonal/Resources/*.mbtiles
 
+# Secrets
+**/Secrets.plist
+
 # OS
 .DS_Store

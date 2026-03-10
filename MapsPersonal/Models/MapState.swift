@@ -28,17 +28,39 @@ class MapState {
         didSet { save() }
     }
 
+    // Terrain overlays
+    var showHillshade = false {
+        didSet { save(); terrainVersion += 1 }
+    }
+    var hillshadeOpacity: Double = 0.5 {
+        didSet { save(); terrainVersion += 1 }
+    }
+    var showContours = false {
+        didSet { save(); terrainVersion += 1 }
+    }
+    var contourOpacity: Double = 0.6 {
+        didSet { save(); terrainVersion += 1 }
+    }
+    var terrainVersion: Int = 0
+
     var isRecordingTrack = false
     var currentTrack: GPXTrack?
     var savedTracks: [GPXTrack] = []
 
     var showsUserLocation = true
     var isFollowingUser = false
+    var resetNorthRequest = false
 
     var centerCoordinate = CLLocationCoordinate2D(latitude: 40.4168, longitude: -3.7038) {
         didSet { scheduleCameraSave() }
     }
     var zoomLevel: Double = 6.0 {
+        didSet { scheduleCameraSave() }
+    }
+    var bearing: Double = 0.0 {
+        didSet { scheduleCameraSave() }
+    }
+    var pitch: Double = 0.0 {
         didSet { scheduleCameraSave() }
     }
 
@@ -81,13 +103,22 @@ class MapState {
         dynamicOverlayOpacity = [:]
         centerCoordinate = CLLocationCoordinate2D(latitude: 40.4168, longitude: -3.7038)
         zoomLevel = 6.0
+        bearing = 0.0
+        pitch = 0.0
+        showHillshade = false
+        hillshadeOpacity = 0.5
+        showContours = false
+        contourOpacity = 0.6
         isSaving = false
 
         // Clear all saved state
         let d = Self.defaults
         for key in ["map.baseLayer", "map.overlays", "map.overlayOpacity",
                      "map.dynamicOverlays", "map.dynamicOverlayOpacity",
-                     "map.lat", "map.lon", "map.zoom"] {
+                     "map.lat", "map.lon", "map.zoom",
+                     "map.bearing", "map.pitch",
+                     "map.showHillshade", "map.hillshadeOpacity",
+                     "map.showContours", "map.contourOpacity"] {
             d.removeObject(forKey: key)
         }
     }
@@ -108,6 +139,8 @@ class MapState {
         d.set(centerCoordinate.latitude, forKey: "map.lat")
         d.set(centerCoordinate.longitude, forKey: "map.lon")
         d.set(zoomLevel, forKey: "map.zoom")
+        d.set(bearing, forKey: "map.bearing")
+        d.set(pitch, forKey: "map.pitch")
     }
 
     private func save() {
@@ -124,6 +157,12 @@ class MapState {
         // Dynamic overlays
         d.set(Array(activeDynamicOverlays), forKey: "map.dynamicOverlays")
         d.set(dynamicOverlayOpacity, forKey: "map.dynamicOverlayOpacity")
+
+        // Terrain overlays
+        d.set(showHillshade, forKey: "map.showHillshade")
+        d.set(hillshadeOpacity, forKey: "map.hillshadeOpacity")
+        d.set(showContours, forKey: "map.showContours")
+        d.set(contourOpacity, forKey: "map.contourOpacity")
     }
 
     private func restore() {
@@ -167,6 +206,19 @@ class MapState {
         }
         if zoom > 0 {
             zoomLevel = zoom
+        }
+
+        bearing = d.double(forKey: "map.bearing")
+        pitch = d.double(forKey: "map.pitch")
+
+        // Terrain overlays
+        showHillshade = d.bool(forKey: "map.showHillshade")
+        if d.object(forKey: "map.hillshadeOpacity") != nil {
+            hillshadeOpacity = d.double(forKey: "map.hillshadeOpacity")
+        }
+        showContours = d.bool(forKey: "map.showContours")
+        if d.object(forKey: "map.contourOpacity") != nil {
+            contourOpacity = d.double(forKey: "map.contourOpacity")
         }
     }
 }

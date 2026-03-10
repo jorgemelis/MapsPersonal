@@ -19,9 +19,12 @@ struct WeatherBarView: View {
                         Image(systemName: "sun.max.fill")
                             .foregroundStyle(uvColor(uv))
                             .font(.caption)
-                        Text(String(format: "UV %.0f", uv))
+                        Text("UV")
                             .font(.system(.caption, design: .rounded))
+                        Text("\(Int(uv.rounded()))")
+                            .font(.system(.caption, design: .rounded).weight(.bold))
                     }
+                    .fixedSize()
                 }
 
                 if let precip = weather.precipitationProbability, precip > 0 {
@@ -85,13 +88,13 @@ struct WeatherBarView: View {
                                         .font(.caption2)
                                 }
 
-                                if hour.uvIndex >= 3 {
+                                if hour.uvIndex >= 1 {
                                     HStack(spacing: 2) {
                                         Image(systemName: "sun.max.fill")
                                             .font(.system(size: 9))
                                             .foregroundStyle(uvColor(hour.uvIndex))
-                                        Text(String(format: "%.0f", hour.uvIndex))
-                                            .font(.system(.caption2, design: .rounded))
+                                        Text("\(Int(hour.uvIndex.rounded()))")
+                                            .font(.system(.caption2, design: .rounded).weight(.medium))
                                     }
                                 } else {
                                     Text(" ")

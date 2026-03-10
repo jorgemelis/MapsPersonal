@@ -4,8 +4,10 @@ import MapLibre
 
 enum TileSourceFactory {
 
-    static func makeSource(for layer: MapLayer, urlOverride: String? = nil) -> MLNRasterTileSource {
-        let url = urlOverride ?? layer.tileURLTemplate ?? ""
+    static func makeSource(for layer: MapLayer, urlOverride: String? = nil) -> MLNRasterTileSource? {
+        guard let url = urlOverride ?? layer.tileURLTemplate, !url.isEmpty else {
+            return nil
+        }
         return MLNRasterTileSource(
             identifier: layer.rawValue,
             tileURLTemplates: [url],
