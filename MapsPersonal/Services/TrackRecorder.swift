@@ -78,7 +78,7 @@ class TrackRecorder {
         if heartRateService.isAvailable {
             Task {
                 if !heartRateService.isAuthorized {
-                    await heartRateService.requestAuthorization()
+                    _ = await heartRateService.requestAuthorization()
                 }
                 heartRateService.startMonitoring()
             }

@@ -106,26 +106,30 @@ class HeartRateService {
     ) async -> Bool {
         guard isAvailable else { return false }
 
-        let workout = HKWorkout(
-            activityType: .hiking,
-            start: start,
-            end: end,
-            duration: end.timeIntervalSince(start),
-            totalEnergyBurned: nil,
-            totalDistance: HKQuantity(unit: .meter(), doubleValue: distance),
-            metadata: [
-                HKMetadataKeyIndoorWorkout: false,
-                "MapsPersonalTrack": true
-            ]
-        )
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .hiking
+        configuration.locationType = .outdoor
+
+        let builder = HKWorkoutBuilder(healthStore: healthStore, configuration: configuration, device: nil)
 
         do {
-            try await healthStore.save(workout)
+            try await builder.beginCollection(at: start)
 
-            // Add elevation gain as a sample associated with the workout
+            // Add distance sample
+            if distance > 0 {
+                let distanceType = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!
+                let distanceSample = HKQuantitySample(
+                    type: distanceType,
+                    quantity: HKQuantity(unit: .meter(), doubleValue: distance),
+                    start: start,
+                    end: end
+                )
+                try await builder.addSamples([distanceSample])
+            }
+
+            // Add elevation gain as flights climbed
             if elevationGain > 0 {
                 let elevationType = HKQuantityType.quantityType(forIdentifier: .flightsClimbed)!
-                // Convert meters to flights (1 flight ≈ 3m)
                 let flights = elevationGain / 3.0
                 let elevationSample = HKQuantitySample(
                     type: elevationType,
@@ -133,13 +137,17 @@ class HeartRateService {
                     start: start,
                     end: end
                 )
-                try await healthStore.addSamples([elevationSample], to: workout)
+                try await builder.addSamples([elevationSample])
             }
+
+            try await builder.endCollection(at: end)
+            try await builder.finishWorkout()
 
             print("HeartRateService: Workout saved to Health (\(String(format: "%.1f", distance))m, \(String(format: "%.0f", elevationGain))m gain)")
             return true
         } catch {
             print("HeartRateService: Failed to save workout: \(error)")
+            try? await builder.endCollection(at: end)
             return false
         }
     }
