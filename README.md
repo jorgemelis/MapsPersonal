@@ -65,7 +65,20 @@ python analyze.py path/to/track.gpx --elevation dem   # DEM correction
 
 ### Desktop Control Center
 - **Track Manager**: analyze GPX tracks with elevation profiles, speed charts, pace splits, heart rate graphs
-- **Geology Manager**: search places, browse an interactive map, download geological map tiles for Spain, France, Belgium, and Canada. Transfer to iPhone with one click.
+- **Geology Manager**: search places, browse an interactive map, download geological map tiles and transfer to iPhone with one click
+
+#### Available Geological Map Sources
+
+| Source | Country | Scale | Type | Service |
+|--------|---------|-------|------|---------|
+| IGME MAGNA 50 | Spain | 1:50,000 | ArcGIS REST | mapas.igme.es |
+| BRGM Carte Géologique | France | 1:50,000 | WMS | geoservices.brgm.fr |
+| GSB Geological Map | Belgium | 1:40,000 | WMS | gisel.naturalsciences.be |
+| NRCan Bedrock Geology | Canada (federal) | 1:5,000,000 | WMS | maps-cartes.services.geo.ca |
+| Ontario Geological Survey | Canada (Ontario) | 1:250,000 | ArcGIS REST | ws.lioservices.lrc.gov.on.ca |
+| SIGEOM Géologie du socle | Canada (Québec) | 1:250,000 | WMS | servicesvectoriels.atlas.gouv.qc.ca |
+
+The Geology Manager auto-detects which source to use based on the location you search for. Provincial sources (Ontario, Québec) are preferred over the less detailed federal map when available.
 
 ### Track Analyzer
 - Elevation analysis: GPS (filtered/smoothed) or DEM (SRTM 30m via OpenTopoData)
