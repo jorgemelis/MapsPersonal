@@ -41,6 +41,9 @@ class MapState {
     var contourOpacity: Double = 0.6 {
         didSet { save(); terrainVersion += 1 }
     }
+    var showPeaks = false {
+        didSet { save(); terrainVersion += 1 }
+    }
     var terrainVersion: Int = 0
 
     var isRecordingTrack = false
@@ -48,8 +51,9 @@ class MapState {
     var savedTracks: [GPXTrack] = []
 
     var showsUserLocation = true
-    var isFollowingUser = false
+    var isFollowingUser = true
     var resetNorthRequest = false
+    var flyToCoordinate: CLLocationCoordinate2D?  // set to fly map to a location
 
     var centerCoordinate = CLLocationCoordinate2D(latitude: 40.4168, longitude: -3.7038) {
         didSet { scheduleCameraSave() }
@@ -109,6 +113,7 @@ class MapState {
         hillshadeOpacity = 0.5
         showContours = false
         contourOpacity = 0.6
+        showPeaks = false
         isSaving = false
 
         // Clear all saved state
@@ -163,6 +168,7 @@ class MapState {
         d.set(hillshadeOpacity, forKey: "map.hillshadeOpacity")
         d.set(showContours, forKey: "map.showContours")
         d.set(contourOpacity, forKey: "map.contourOpacity")
+        d.set(showPeaks, forKey: "map.showPeaks")
     }
 
     private func restore() {
@@ -220,5 +226,6 @@ class MapState {
         if d.object(forKey: "map.contourOpacity") != nil {
             contourOpacity = d.double(forKey: "map.contourOpacity")
         }
+        showPeaks = d.bool(forKey: "map.showPeaks")
     }
 }

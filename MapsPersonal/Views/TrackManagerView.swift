@@ -6,6 +6,8 @@ struct TrackManagerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var files: [URL] = []
     @State private var shareURL: URL?
+    @State private var uploadedFiles: Set<String> = []
+    @State private var uploadingFile: String?
 
     var body: some View {
         NavigationStack {
@@ -25,6 +27,23 @@ struct TrackManagerView: View {
                                 }
 
                                 Spacer()
+
+                                // iCloud button
+                                Button {
+                                    uploadToICloud(file)
+                                } label: {
+                                    if uploadingFile == file.lastPathComponent {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else if uploadedFiles.contains(file.lastPathComponent) {
+                                        Image(systemName: "checkmark.icloud.fill")
+                                            .foregroundStyle(.green)
+                                    } else {
+                                        Image(systemName: "icloud.and.arrow.up")
+                                    }
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(uploadedFiles.contains(file.lastPathComponent) || uploadingFile != nil)
 
                                 // Share button
                                 Button {
@@ -55,6 +74,19 @@ struct TrackManagerView: View {
         )) {
             if let url = shareURL {
                 ShareSheet(items: [url])
+            }
+        }
+    }
+
+    private func uploadToICloud(_ file: URL) {
+        uploadingFile = file.lastPathComponent
+        DispatchQueue.global(qos: .userInitiated).async {
+            let success = TrackRecorder.copyToICloud(file)
+            DispatchQueue.main.async {
+                uploadingFile = nil
+                if success {
+                    uploadedFiles.insert(file.lastPathComponent)
+                }
             }
         }
     }

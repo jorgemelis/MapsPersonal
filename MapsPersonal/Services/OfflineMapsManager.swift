@@ -19,12 +19,23 @@ class OfflineMapsManager {
         var isActive: Bool = false
     }
 
-    /// Scan Documents directory for .mbtiles files (added via Finder/File Sharing)
+    /// Scan Documents and iCloud Maps directory for .mbtiles files
     func scan() {
         var maps: [OfflineMapInfo] = []
 
+        // Local Documents (via Finder/File Sharing)
         if let docsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             maps += scanDirectory(docsURL.path)
+        }
+
+        // iCloud Maps (transferred from Control Center on Mac)
+        if let container = FileManager.default.url(forUbiquityContainerIdentifier: "iCloud.com.jorge.mapspersonal2026") {
+            let mapsDir = container.appendingPathComponent("Documents/Maps")
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: mapsDir.path) {
+                try? fm.createDirectory(at: mapsDir, withIntermediateDirectories: true)
+            }
+            maps += scanDirectory(mapsDir.path)
         }
 
         availableMaps = maps
@@ -38,16 +49,44 @@ class OfflineMapsManager {
             return existing.urlTemplate
         }
 
+        // If the file is in iCloud, copy to local for fast access
+        let path = ensureLocal(availableMaps[index].path)
+
         let server = LocalTileServer(port: nextPort)
         nextPort += 1
 
-        if server.start(mbtilesPath: availableMaps[index].path) {
+        if server.start(mbtilesPath: path) {
             servers[mapId] = server
             availableMaps[index].urlTemplate = server.urlTemplate
             availableMaps[index].isActive = true
             return server.urlTemplate
         }
         return nil
+    }
+
+    /// Copy iCloud file to local Documents if needed, return local path
+    private func ensureLocal(_ path: String) -> String {
+        // If already in Documents, use as-is
+        let docsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? ""
+        if path.hasPrefix(docsPath) {
+            return path
+        }
+
+        // iCloud file — copy to local Documents for fast tile serving
+        let fm = FileManager.default
+        let filename = (path as NSString).lastPathComponent
+        let localPath = (docsPath as NSString).appendingPathComponent(filename)
+
+        if !fm.fileExists(atPath: localPath) {
+            // Trigger iCloud download if needed
+            let url = URL(fileURLWithPath: path)
+            try? fm.startDownloadingUbiquitousItem(at: url)
+
+            // Copy to local
+            try? fm.copyItem(atPath: path, toPath: localPath)
+        }
+
+        return fm.fileExists(atPath: localPath) ? localPath : path
     }
 
     /// Stop serving a specific map

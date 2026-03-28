@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import SwiftUI
 
 // MARK: - Weather Data
 
@@ -10,6 +11,7 @@ struct WeatherData {
     var humidity: Int
     var windSpeed: Double
     var weatherCode: Int
+    var isDay: Bool
     var hourlyForecast: [HourlyForecastItem]
 }
 
@@ -21,6 +23,7 @@ struct HourlyForecastItem: Identifiable {
     let weatherCode: Int
     let uvIndex: Double
     let windSpeed: Double
+    let isDay: Bool
 }
 
 // MARK: - Weather Provider Protocol
@@ -39,6 +42,7 @@ class WeatherService {
     var humidity: Int?
     var windSpeed: Double?
     var weatherCode: Int?
+    var isDay: Bool = true
     var hourlyForecast: [HourlyForecastItem] = []
     var isLoading = false
     var lastUpdate: Date?
@@ -72,6 +76,7 @@ class WeatherService {
                 humidity = data.humidity
                 windSpeed = data.windSpeed
                 weatherCode = data.weatherCode
+                isDay = data.isDay
                 precipitationProbability = data.precipitationProbability
                 hourlyForecast = data.hourlyForecast
 
@@ -108,32 +113,48 @@ class WeatherService {
         guard let uv = uvIndex else { return "--" }
         let level: String
         switch uv {
-        case ..<3: level = "Bajo"
-        case ..<6: level = "Moderado"
-        case ..<8: level = "Alto"
-        case ..<11: level = "Muy alto"
-        default: level = "Extremo"
+        case ..<3: level = "OK"
+        case ..<6: level = "Crema solar"
+        case ..<8: level = "Crema+sombrero"
+        case ..<11: level = "Evitar sol"
+        default: level = "No salir"
         }
         return String(format: "%.0f %@", uv, level)
     }
 
-    var weatherEmoji: String {
-        guard let code = weatherCode else { return "" }
-        return Self.emojiForCode(code)
+    var weatherSymbol: (name: String, color: Color) {
+        guard let code = weatherCode else { return ("cloud", .gray) }
+        return Self.symbolForCode(code, isDay: isDay)
     }
 
-    static func emojiForCode(_ code: Int) -> String {
+    static func symbolForCode(_ code: Int, isDay: Bool = true) -> (name: String, color: Color) {
+        if !isDay {
+            switch code {
+            case 0: return ("moon.stars.fill", .indigo)
+            case 1, 2: return ("cloud.moon.fill", .indigo)
+            case 3: return ("cloud.fill", .gray)
+            case 45, 48: return ("cloud.fog.fill", .gray)
+            case 51, 53, 55, 56, 57: return ("cloud.drizzle.fill", .cyan)
+            case 61, 63, 65, 66, 67: return ("cloud.rain.fill", .blue)
+            case 71, 73, 75, 77: return ("cloud.snow.fill", .white)
+            case 80, 81, 82: return ("cloud.heavyrain.fill", .blue)
+            case 85, 86: return ("cloud.snow.fill", .white)
+            case 95, 96, 99: return ("cloud.bolt.rain.fill", .yellow)
+            default: return ("cloud.moon.fill", .indigo)
+            }
+        }
         switch code {
-        case 0: return "☀️"
-        case 1, 2, 3: return "⛅"
-        case 45, 48: return "🌫️"
-        case 51, 53, 55, 56, 57: return "🌦️"
-        case 61, 63, 65, 66, 67: return "🌧️"
-        case 71, 73, 75, 77: return "🌨️"
-        case 80, 81, 82: return "🌧️"
-        case 85, 86: return "🌨️"
-        case 95, 96, 99: return "⛈️"
-        default: return "🌤️"
+        case 0: return ("sun.max.fill", .yellow)
+        case 1, 2: return ("cloud.sun.fill", .yellow)
+        case 3: return ("cloud.fill", .gray)
+        case 45, 48: return ("cloud.fog.fill", .gray)
+        case 51, 53, 55, 56, 57: return ("cloud.drizzle.fill", .cyan)
+        case 61, 63, 65, 66, 67: return ("cloud.rain.fill", .blue)
+        case 71, 73, 75, 77: return ("cloud.snow.fill", .white)
+        case 80, 81, 82: return ("cloud.heavyrain.fill", .blue)
+        case 85, 86: return ("cloud.snow.fill", .white)
+        case 95, 96, 99: return ("cloud.bolt.rain.fill", .yellow)
+        default: return ("cloud.sun.fill", .yellow)
         }
     }
 }
@@ -144,7 +165,7 @@ struct OpenMeteoProvider: WeatherProvider {
     func fetchWeather(for location: CLLocationCoordinate2D) async throws -> WeatherData {
         let lat = location.latitude
         let lon = location.longitude
-        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,uv_index&hourly=temperature_2m,precipitation_probability,weather_code,uv_index,wind_speed_10m&forecast_hours=24&timezone=auto"
+        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,uv_index,is_day&hourly=temperature_2m,precipitation_probability,weather_code,uv_index,wind_speed_10m,is_day&forecast_hours=24&timezone=auto"
 
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
@@ -171,13 +192,15 @@ struct OpenMeteoProvider: WeatherProvider {
             // Only include future hours
             guard date > now else { continue }
 
+            let isDay = i < response.hourly.is_day.count ? response.hourly.is_day[i] == 1 : true
             hourly.append(HourlyForecastItem(
                 time: date,
                 temperature: response.hourly.temperature_2m[i],
                 precipitationProbability: response.hourly.precipitation_probability[i],
                 weatherCode: Int(response.hourly.weather_code[i]),
                 uvIndex: response.hourly.uv_index[i],
-                windSpeed: response.hourly.wind_speed_10m[i]
+                windSpeed: response.hourly.wind_speed_10m[i],
+                isDay: isDay
             ))
         }
 
@@ -188,6 +211,7 @@ struct OpenMeteoProvider: WeatherProvider {
             humidity: Int(response.current.relative_humidity_2m),
             windSpeed: response.current.wind_speed_10m,
             weatherCode: Int(response.current.weather_code),
+            isDay: response.current.is_day == 1,
             hourlyForecast: hourly
         )
     }
@@ -203,6 +227,7 @@ private struct OpenMeteoResponse: Decodable {
         let weather_code: Double
         let wind_speed_10m: Double
         let uv_index: Double
+        let is_day: Int
     }
 
     struct HourlyWeather: Decodable {
@@ -212,6 +237,7 @@ private struct OpenMeteoResponse: Decodable {
         let weather_code: [Double]
         let uv_index: [Double]
         let wind_speed_10m: [Double]
+        let is_day: [Int]
     }
 }
 

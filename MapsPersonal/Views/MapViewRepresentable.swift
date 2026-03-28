@@ -7,6 +7,7 @@ struct MapViewRepresentable: UIViewRepresentable {
     let mapState: MapState
     let trackRecorder: TrackRecorder
     let tractiveService: TractiveService?
+    let peakService: PeakService?
     var onCameraChange: ((CLLocationCoordinate2D, Double, Double, Double) -> Void)?
 
     // Explicit values so SwiftUI detects changes and calls updateUIView
@@ -46,6 +47,15 @@ struct MapViewRepresentable: UIViewRepresentable {
             mapView.setCenter(loc, zoomLevel: max(mapView.zoomLevel, 14), animated: true)
         }
 
+        // Fly to searched location
+        if let target = mapState.flyToCoordinate {
+            mapView.setCenter(target, zoomLevel: 14, animated: true)
+            Task { @MainActor in
+                self.mapState.flyToCoordinate = nil
+                self.mapState.isFollowingUser = false
+            }
+        }
+
         // Reset north: bearing = 0, pitch = 0
         if mapState.resetNorthRequest {
             mapView.setDirection(0, animated: true)
@@ -68,6 +78,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         if let style = mapView.style {
             context.coordinator.syncLayers(style: style, state: mapState)
             context.coordinator.syncTrackOverlay(mapView: mapView, recorder: trackRecorder)
+            context.coordinator.syncPeaks(mapView: mapView, style: style, state: mapState, peakService: peakService)
         }
 
         // Sync pet annotations (independent of style)
@@ -100,6 +111,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         private var petTrailAnnotations: [String: MLNPolyline] = [:]
         private var hillshadeActive = false
         private var contoursActive = false
+        private var peaksActive = false
 
         init(parent: MapViewRepresentable) {
             self.parent = parent
@@ -141,6 +153,48 @@ struct MapViewRepresentable: UIViewRepresentable {
             pin.title = String(format: "%.6f, %.6f", coord.latitude, coord.longitude)
             mapView.addAnnotation(pin)
             mapView.selectAnnotation(pin, animated: true, completionHandler: nil)
+        }
+
+        func mapView(_ mapView: MLNMapView, viewFor annotation: MLNAnnotation) -> MLNAnnotationView? {
+            // Only customize pet annotations (identified by emoji in title)
+            guard let point = annotation as? MLNPointAnnotation,
+                  let title = point.title,
+                  (title.contains("🐕") || title.contains("🐱")) else {
+                return nil // default pin for other annotations
+            }
+
+            let reuseId = "pet"
+            var view = mapView.dequeueReusableAnnotationView(withIdentifier: reuseId)
+            if view == nil {
+                view = MLNAnnotationView(reuseIdentifier: reuseId)
+                view?.frame = CGRect(x: 0, y: 0, width: 36, height: 36)
+
+                let circle = UIView(frame: view!.bounds)
+                circle.backgroundColor = .systemOrange
+                circle.layer.cornerRadius = 18
+                circle.layer.borderWidth = 2
+                circle.layer.borderColor = UIColor.white.cgColor
+                circle.layer.shadowColor = UIColor.black.cgColor
+                circle.layer.shadowOpacity = 0.3
+                circle.layer.shadowOffset = CGSize(width: 0, height: 2)
+                circle.layer.shadowRadius = 3
+                circle.tag = 100
+                view?.addSubview(circle)
+
+                let label = UILabel(frame: view!.bounds)
+                label.textAlignment = .center
+                label.font = .systemFont(ofSize: 20)
+                label.tag = 101
+                view?.addSubview(label)
+            }
+
+            // Update emoji
+            let emoji = title.contains("🐱") ? "🐱" : "🐕"
+            if let label = view?.viewWithTag(101) as? UILabel {
+                label.text = emoji
+            }
+
+            return view
         }
 
         func mapView(_ mapView: MLNMapView, annotationCanShowCallout annotation: MLNAnnotation) -> Bool {
@@ -387,6 +441,92 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
 
+        // MARK: - Peaks
+
+        func syncPeaks(mapView: MLNMapView, style: MLNStyle, state: MapState, peakService: PeakService?) {
+            if state.showPeaks {
+                guard let service = peakService else { return }
+
+                // Fetch peaks for visible area
+                let bounds = mapView.visibleCoordinateBounds
+                Task {
+                    await service.fetchPeaks(
+                        south: bounds.sw.latitude,
+                        west: bounds.sw.longitude,
+                        north: bounds.ne.latitude,
+                        east: bounds.ne.longitude
+                    )
+                    await MainActor.run {
+                        self.updatePeakLayer(style: style, peaks: service.peaks)
+                    }
+                }
+                peaksActive = true
+
+            } else if peaksActive {
+                // Remove peak layers
+                for id in ["peaks-labels", "peaks-circles"] {
+                    if let layer = style.layer(withIdentifier: id) {
+                        style.removeLayer(layer)
+                    }
+                }
+                if let source = style.source(withIdentifier: "peaks-source") {
+                    style.removeSource(source)
+                }
+                peaksActive = false
+            }
+        }
+
+        private func updatePeakLayer(style: MLNStyle, peaks: [Peak]) {
+            // Remove existing source/layers to update
+            for id in ["peaks-labels", "peaks-circles"] {
+                if let layer = style.layer(withIdentifier: id) {
+                    style.removeLayer(layer)
+                }
+            }
+            if let source = style.source(withIdentifier: "peaks-source") {
+                style.removeSource(source)
+            }
+
+            guard !peaks.isEmpty else { return }
+
+            // Create GeoJSON features
+            let features = peaks.map { peak -> MLNPointFeature in
+                let feature = MLNPointFeature()
+                feature.coordinate = peak.coordinate
+                feature.attributes = [
+                    "name": peak.name,
+                    "elevation": peak.elevation ?? 0,
+                    "label": peak.label
+                ]
+                return feature
+            }
+
+            let source = MLNShapeSource(identifier: "peaks-source", features: features, options: nil)
+            style.addSource(source)
+
+            // Triangle/dot marker for peaks
+            let circles = MLNCircleStyleLayer(identifier: "peaks-circles", source: source)
+            circles.circleRadius = NSExpression(forConstantValue: NSNumber(value: 4))
+            circles.circleColor = NSExpression(forConstantValue: UIColor.systemBrown)
+            circles.circleStrokeColor = NSExpression(forConstantValue: UIColor.white)
+            circles.circleStrokeWidth = NSExpression(forConstantValue: NSNumber(value: 1.5))
+            circles.minimumZoomLevel = 10
+            style.addLayer(circles)
+
+            // Peak name + elevation labels
+            let labels = MLNSymbolStyleLayer(identifier: "peaks-labels", source: source)
+            labels.text = NSExpression(forKeyPath: "label")
+            labels.textFontSize = NSExpression(forConstantValue: NSNumber(value: 11))
+            labels.textColor = NSExpression(forConstantValue: UIColor(red: 0.4, green: 0.25, blue: 0.1, alpha: 1.0))
+            labels.textHaloColor = NSExpression(forConstantValue: UIColor.white.withAlphaComponent(0.9))
+            labels.textHaloWidth = NSExpression(forConstantValue: NSNumber(value: 1.5))
+            labels.textOffset = NSExpression(forConstantValue: NSValue(cgVector: CGVector(dx: 0, dy: 1.2)))
+            labels.textAnchor = NSExpression(forConstantValue: "top")
+            labels.textAllowsOverlap = NSExpression(forConstantValue: false)
+            labels.minimumZoomLevel = 11
+            style.addLayer(labels)
+        }
+
         // MARK: - Track Overlay
 
         func syncTrackOverlay(mapView: MLNMapView, recorder: TrackRecorder) {
@@ -434,6 +574,10 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
 
             let visiblePets = tractive.visiblePets
+            print("🐾 syncPetAnnotation: \(visiblePets.count) visible pets, \(tractive.pets.count) total")
+            for p in tractive.pets {
+                print("🐾   \(p.name): visible=\(p.isVisible), hasPos=\(p.position != nil)")
+            }
             let visibleIds = Set(visiblePets.map { $0.id })
 
             // Remove annotations for pets no longer visible

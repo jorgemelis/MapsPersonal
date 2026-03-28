@@ -15,5 +15,9 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSHealthShareUsageDescription</key>
+	<string>MapsPersonal reads your heart rate during track recording to include it in GPX exports.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>MapsPersonal saves your hiking workouts to Apple Health.</string>
 </dict>
 </plist>

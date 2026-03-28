@@ -9,13 +9,15 @@ struct TrackPoint: Codable, Identifiable {
     let longitude: Double
     let elevation: Double?
     let timestamp: Date
+    var heartRate: Int?
 
-    init(location: CLLocation) {
+    init(location: CLLocation, heartRate: Int? = nil) {
         self.id = UUID()
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.elevation = location.altitude > -999 ? location.altitude : nil
         self.timestamp = location.timestamp
+        self.heartRate = heartRate
     }
 
     var coordinate: CLLocationCoordinate2D {
@@ -139,7 +141,7 @@ struct GPXTrack: Identifiable, Codable {
 
     private static func defaultName(for date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return "Track \(formatter.string(from: date))"
+        formatter.dateFormat = "yyyyMMdd_HHmm"
+        return "MP\(formatter.string(from: date))"
     }
 }

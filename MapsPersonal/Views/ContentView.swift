@@ -14,11 +14,19 @@ struct ContentView: View {
     @State private var showStats = false
     @State private var showWeather = false
     @State private var showTrackManager = false
+    @State private var showSettings = false
+    @State private var showChecklists = false
+    @State private var showHelp = false
     @State private var shareFileURL: URL?
     @State private var coordinateText = ""
     @State private var mapBearing: Double = 0
     @State private var mapPitch: Double = 0
     @State private var tractive = TractiveService()
+    @State private var peakService = PeakService()
+    @State private var showSearch = false
+    @State private var searchText = ""
+    @State private var searchResults: [GeocodingResult] = []
+    @State private var isSearching = false
 
     var body: some View {
         ZStack {
@@ -27,6 +35,7 @@ struct ContentView: View {
                 mapState: mapState,
                 trackRecorder: trackRecorder ?? TrackRecorder(locationService: locationService),
                 tractiveService: tractive.isConnected ? tractive : nil,
+                peakService: mapState.showPeaks ? peakService : nil,
                 onCameraChange: { coord, zoom, bearing, pitch in
                     DispatchQueue.main.async {
                         coordinateText = String(format: "%.5f, %.5f  z%.1f", coord.latitude, coord.longitude, zoom)
@@ -55,6 +64,70 @@ struct ContentView: View {
                     .padding(.top, 50)
                 }
                 Spacer()
+            }
+
+            // Search overlay
+            if showSearch {
+                VStack(spacing: 0) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search place...", text: $searchText)
+                            .textFieldStyle(.plain)
+                            .autocorrectionDisabled()
+                            .onSubmit { performSearch() }
+                        if isSearching {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Button {
+                            showSearch = false
+                            searchText = ""
+                            searchResults = []
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal)
+                    .padding(.top, 50)
+
+                    if !searchResults.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(searchResults) { result in
+                                Button {
+                                    mapState.flyToCoordinate = result.coordinate
+                                    showSearch = false
+                                    searchText = ""
+                                    searchResults = []
+                                } label: {
+                                    HStack {
+                                        Image(systemName: "mappin")
+                                            .foregroundStyle(.red)
+                                            .frame(width: 20)
+                                        Text(result.name)
+                                            .font(.subheadline)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                    }
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 12)
+                                }
+                                Divider()
+                            }
+                        }
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal)
+                        .padding(.top, 4)
+                    }
+
+                    Spacer()
+                }
+                .zIndex(10)
             }
 
             // UI overlays
@@ -111,9 +184,7 @@ struct ContentView: View {
                 }
 
                 // Bottom bar: buttons + record
-                HStack {
-                    Spacer()
-
+                HStack(spacing: 0) {
                     // Weather toggle
                     if weather.temperature != nil {
                         Button {
@@ -122,10 +193,11 @@ struct ContentView: View {
                             }
                         } label: {
                             Image(systemName: showWeather ? "cloud.sun.fill" : "cloud.sun")
-                                .font(.title3)
-                                .padding(8)
+                                .font(.body)
+                                .padding(7)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .frame(maxWidth: .infinity)
                     }
 
                     // Pet tracker menu
@@ -143,8 +215,8 @@ struct ContentView: View {
                             }
                         } label: {
                             Image(systemName: "pawprint.fill")
-                                .font(.title3)
-                                .padding(8)
+                                .font(.body)
+                                .padding(7)
                                 .background(
                                     tractive.visiblePets.isEmpty
                                         ? AnyShapeStyle(.ultraThinMaterial)
@@ -152,6 +224,7 @@ struct ContentView: View {
                                     in: Circle()
                                 )
                         }
+                        .frame(maxWidth: .infinity)
                     }
 
                     // Start recording (only when idle)
@@ -166,52 +239,82 @@ struct ContentView: View {
                             }
                         } label: {
                             Image(systemName: "record.circle")
-                                .font(.title3)
+                                .font(.body)
                                 .foregroundStyle(.red)
-                                .padding(8)
+                                .padding(7)
                                 .background(.ultraThinMaterial, in: Circle())
                         }
+                        .frame(maxWidth: .infinity)
                     }
 
-                    // Saved tracks
+                    // Search
                     Button {
-                        showTrackManager = true
+                        withAnimation { showSearch.toggle() }
                     } label: {
-                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
-                            .font(.title3)
-                            .padding(8)
-                            .background(.ultraThinMaterial, in: Circle())
+                        Image(systemName: "magnifyingglass")
+                            .font(.body)
+                            .padding(7)
+                            .background(showSearch ? AnyShapeStyle(.blue.opacity(0.3)) : AnyShapeStyle(.ultraThinMaterial), in: Circle())
                     }
-
-                    // Offline maps
-                    Button {
-                        showOfflineMaps = true
-                    } label: {
-                        Image(systemName: "arrow.down.circle")
-                            .font(.title3)
-                            .padding(8)
-                            .background(.ultraThinMaterial, in: Circle())
-                    }
+                    .frame(maxWidth: .infinity)
 
                     // Location: tap = toggle follow mode
                     Button {
                         mapState.isFollowingUser.toggle()
                     } label: {
                         Image(systemName: mapState.isFollowingUser ? "location.fill" : "location")
-                            .font(.title3)
-                            .padding(8)
+                            .font(.body)
+                            .padding(7)
                             .background(mapState.isFollowingUser ? AnyShapeStyle(.blue.opacity(0.3)) : AnyShapeStyle(.ultraThinMaterial), in: Circle())
                     }
+                    .frame(maxWidth: .infinity)
 
                     // Layer picker
                     Button {
                         showLayerPicker = true
                     } label: {
                         Image(systemName: "square.3.layers.3d")
-                            .font(.title3)
-                            .padding(8)
+                            .font(.body)
+                            .padding(7)
                             .background(.ultraThinMaterial, in: Circle())
                     }
+                    .frame(maxWidth: .infinity)
+
+                    // More menu
+                    Menu {
+                        Button {
+                            showTrackManager = true
+                        } label: {
+                            Label("Saved Tracks", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                        }
+                        Button {
+                            showOfflineMaps = true
+                        } label: {
+                            Label("Offline Maps", systemImage: "arrow.down.circle")
+                        }
+                        Button {
+                            showChecklists = true
+                        } label: {
+                            Label("Checklists", systemImage: "checklist")
+                        }
+                        Divider()
+                        Button {
+                            showSettings = true
+                        } label: {
+                            Label("Settings", systemImage: "gearshape")
+                        }
+                        Button {
+                            showHelp = true
+                        } label: {
+                            Label("Features", systemImage: "questionmark.circle")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.body)
+                            .padding(7)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .frame(maxWidth: .infinity)
                 }
                 .padding(.horizontal)
 
@@ -235,7 +338,8 @@ struct ContentView: View {
                     ?? (mapState.centerCoordinate.latitude != 40.4168 ? mapState.centerCoordinate : nil)
             }
 
-            // Tractive: connect and start auto-refresh
+            // Tractive: connect (starts event channel automatically)
+            // Auto-refresh as fallback for when channel disconnects
             Task {
                 await tractive.connect()
                 if tractive.isConnected {
@@ -273,9 +377,33 @@ struct ContentView: View {
             TrackManagerView()
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showChecklists) {
+            ChecklistListView()
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showHelp) {
+            HelpView()
+                .presentationDetents([.large])
+        }
     }
 
     /// Start tile servers only for maps that were explicitly active in previous session
+    private func performSearch() {
+        guard !searchText.isEmpty else { return }
+        isSearching = true
+        Task {
+            let results = await GeocodingService.search(searchText)
+            await MainActor.run {
+                searchResults = results
+                isSearching = false
+            }
+        }
+    }
+
     private func autoActivateMaps() {
         let savedActive = mapState.activeDynamicOverlays
 

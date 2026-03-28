@@ -4,25 +4,41 @@ import SwiftUI
 
 struct WeatherBarView: View {
     let weather: WeatherService
+    @State private var showUVTip = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Current conditions
             HStack(spacing: 14) {
                 if let temp = weather.temperature {
-                    Text("\(weather.weatherEmoji) \(String(format: "%.0f°", temp))")
-                        .font(.system(.body, design: .rounded).weight(.medium))
+                    HStack(spacing: 4) {
+                        Image(systemName: weather.weatherSymbol.name)
+                            .foregroundStyle(weather.weatherSymbol.color)
+                        Text(String(format: "%.0f°", temp))
+                    }
+                    .font(.system(.body, design: .rounded).weight(.medium))
                 }
 
                 if let uv = weather.uvIndex {
-                    HStack(spacing: 3) {
-                        Image(systemName: "sun.max.fill")
-                            .foregroundStyle(uvColor(uv))
-                            .font(.caption)
-                        Text("UV")
-                            .font(.system(.caption, design: .rounded))
-                        Text("\(Int(uv.rounded()))")
-                            .font(.system(.caption, design: .rounded).weight(.bold))
+                    Button {
+                        showUVTip.toggle()
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "sun.max.fill")
+                                .foregroundStyle(uvColor(uv))
+                                .font(.caption)
+                            Text("UV")
+                                .font(.system(.caption, design: .rounded))
+                            Text("\(Int(uv.rounded()))")
+                                .font(.system(.caption, design: .rounded).weight(.bold))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .popover(isPresented: $showUVTip) {
+                        Text(weather.uvDescription)
+                            .font(.system(.caption, design: .rounded).weight(.medium))
+                            .padding(10)
+                            .presentationCompactAdaptation(.popover)
                     }
                     .fixedSize()
                 }
@@ -68,8 +84,9 @@ struct WeatherBarView: View {
                                     .font(.system(.caption, design: .rounded))
                                     .foregroundStyle(.secondary)
 
-                                Text(WeatherService.emojiForCode(hour.weatherCode))
+                                Image(systemName: WeatherService.symbolForCode(hour.weatherCode, isDay: hour.isDay).name)
                                     .font(.body)
+                                    .foregroundStyle(WeatherService.symbolForCode(hour.weatherCode, isDay: hour.isDay).color)
 
                                 Text(String(format: "%.0f°", hour.temperature))
                                     .font(.system(.caption, design: .rounded).weight(.semibold))
@@ -121,13 +138,7 @@ struct WeatherBarView: View {
     // MARK: - Helpers
 
     private func uvColor(_ uv: Double) -> Color {
-        switch uv {
-        case ..<3: return .green
-        case ..<6: return .yellow
-        case ..<8: return .orange
-        case ..<11: return .red
-        default: return .purple
-        }
+        uv < 3 ? .green : .red
     }
 
     private func hourLabel(_ date: Date) -> String {

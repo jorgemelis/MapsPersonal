@@ -6,6 +6,7 @@ import CoreLocation
 @Observable
 class TrackRecorder {
     private let locationService: LocationService
+    let heartRateService = HeartRateService()
 
     var isRecording = false
     var currentTrack: GPXTrack?
@@ -24,6 +25,16 @@ class TrackRecorder {
         isRecording = true
         locationService.enableRecordingMode()
 
+        // Request HealthKit permission and start HR monitoring
+        if heartRateService.isAvailable {
+            Task {
+                if !heartRateService.isAuthorized {
+                    await heartRateService.requestAuthorization()
+                }
+                heartRateService.startMonitoring()
+            }
+        }
+
         locationService.onLocationUpdate = { [weak self] location in
             self?.addPoint(location)
         }
@@ -33,6 +44,7 @@ class TrackRecorder {
         isRecording = false
         locationService.disableRecordingMode()
         locationService.onLocationUpdate = nil
+        heartRateService.stopMonitoring()
     }
 
     func saveTrack() -> GPXTrack? {
@@ -70,6 +82,28 @@ class TrackRecorder {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// Copy a GPX file to iCloud for access from Mac/iPad
+    static func copyToICloud(_ url: URL) -> Bool {
+        guard let container = FileManager.default.url(forUbiquityContainerIdentifier: "iCloud.com.jorge.mapspersonal2026") else {
+            return false
+        }
+        let tracksDir = container.appendingPathComponent("Documents/Tracks")
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: tracksDir.path) {
+            try? fm.createDirectory(at: tracksDir, withIntermediateDirectories: true)
+        }
+        let dest = tracksDir.appendingPathComponent(url.lastPathComponent)
+        if fm.fileExists(atPath: dest.path) {
+            try? fm.removeItem(at: dest)
+        }
+        do {
+            try fm.copyItem(at: url, to: dest)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     func discardTrack() {
         stopRecording()
         currentTrack = nil
@@ -80,7 +114,7 @@ class TrackRecorder {
         guard location.horizontalAccuracy <= minAccuracy else { return }
         guard location.horizontalAccuracy >= 0 else { return }
 
-        let point = TrackPoint(location: location)
+        let point = TrackPoint(location: location, heartRate: heartRateService.currentHeartRate)
         currentTrack?.points.append(point)
     }
 }

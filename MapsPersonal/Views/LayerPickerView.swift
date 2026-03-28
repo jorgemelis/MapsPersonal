@@ -51,6 +51,8 @@ struct LayerPickerView: View {
                             }
                         }
                     }
+
+                    Toggle("Picos", isOn: $mapState.showPeaks)
                 }
 
                 // Overlay layers (toggleable)

@@ -62,15 +62,27 @@ class TractiveService {
     var lastPositionUpdate: Date?
 
     private var token: TractiveToken?
+    private var channelTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var liveRefreshTask: Task<Void, Never>?
 
+    /// Map trackerId -> petId for quick lookup from channel events
+    private var trackerToPet: [String: String] = [:]
+
     private static let baseURL = "https://graph.tractive.com/4"
+    private static let channelURL = "https://channel.tractive.com/3/channel"
     private static let clientId = "625e533dc3c3b41c28a669f0"
 
     // MARK: - Credentials from Secrets.plist
 
-    private static let credentials: (email: String, password: String)? = {
+    static var credentials: (email: String, password: String)? {
+        // First try Keychain (user-configured in Settings)
+        if let email = TractiveCredentials.email,
+           let password = TractiveCredentials.password,
+           !email.isEmpty, !password.isEmpty {
+            return (email, password)
+        }
+        // Fallback to Secrets.plist (developer)
         guard let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
               let data = try? Data(contentsOf: url),
               let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
@@ -79,11 +91,21 @@ class TractiveService {
             return nil
         }
         return (email, password)
-    }()
+    }
+
+    /// Disconnect and clear state
+    func disconnect() {
+        channelTask?.cancel()
+        refreshTask?.cancel()
+        liveRefreshTask?.cancel()
+        token = nil
+        pets.removeAll()
+        isConnected = false
+    }
 
     // MARK: - Public API
 
-    /// Connect: authenticate + discover all pets + fetch positions
+    /// Connect: authenticate + discover all pets + fetch positions + start channel
     func connect() async {
         guard let creds = Self.credentials else {
             lastError = "Tractive credentials not found in Secrets.plist"
@@ -103,13 +125,21 @@ class TractiveService {
             var discovered: [TractivePet] = []
             for raw in rawPets {
                 var pet = raw
-                if let pos = try? await fetchPosition(trackerId: pet.trackerId, token: token!) {
+                trackerToPet[pet.trackerId] = pet.id
+                do {
+                    let pos = try await fetchPosition(trackerId: pet.trackerId, token: token!)
                     pet.position = pos
                     print("🐾 \(pet.name): pos=\(pos.coordinate.latitude),\(pos.coordinate.longitude)")
+                } catch {
+                    print("🐾 \(pet.name): fetchPosition FAILED: \(error)")
                 }
-                let hw = try? await fetchHardware(trackerId: pet.trackerId, token: token!)
-                pet.batteryLevel = hw?.batteryLevel
-                pet.isCharging = hw?.isCharging ?? false
+                do {
+                    let hw = try await fetchHardware(trackerId: pet.trackerId, token: token!)
+                    pet.batteryLevel = hw.batteryLevel
+                    pet.isCharging = hw.isCharging
+                } catch {
+                    print("🐾 \(pet.name): fetchHardware FAILED: \(error)")
+                }
                 discovered.append(pet)
             }
 
@@ -118,9 +148,13 @@ class TractiveService {
             lastError = nil
             print("🐾 Tractive: connected, \(pets.count) pets, isConnected=\(isConnected)")
             lastPositionUpdate = Date()
+
+            // Start listening to the event channel
+            startChannel()
         } catch {
             lastError = error.localizedDescription
             isConnected = false
+            print("🐾 Tractive: connect FAILED: \(error)")
         }
     }
 
@@ -132,54 +166,19 @@ class TractiveService {
         }
     }
 
-    /// Refresh all visible pet positions
-    func refreshPositions() async {
-        guard let token else { return }
-
-        do {
-            try await refreshTokenIfNeeded()
-        } catch {
-            lastError = error.localizedDescription
-            return
-        }
-
-        for i in pets.indices where pets[i].isVisible {
-            if let pos = try? await fetchPosition(trackerId: pets[i].trackerId, token: token) {
-                pets[i].position = pos
-            }
-        }
-        lastPositionUpdate = Date()
-    }
-
-    /// Refresh battery for all pets
-    func refreshBatteries() async {
-        guard let token else { return }
-
-        do {
-            try await refreshTokenIfNeeded()
-        } catch { return }
-
-        for i in pets.indices {
-            if let hw = try? await fetchHardware(trackerId: pets[i].trackerId, token: token) {
-                pets[i].batteryLevel = hw.batteryLevel
-                pets[i].isCharging = hw.isCharging
-            }
-        }
-    }
-
-    /// Start auto-refresh (every 30s for position, every 5min for battery)
+    /// Start auto-refresh as fallback (every 60s for position, every 5min for battery)
     func startAutoRefresh() {
         refreshTask?.cancel()
         refreshTask = Task {
             var batteryCounter = 0
             while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
                 await refreshPositions()
                 batteryCounter += 1
-                if batteryCounter >= 10 {
+                if batteryCounter >= 5 {
                     await refreshBatteries()
                     batteryCounter = 0
                 }
-                try? await Task.sleep(for: .seconds(30))
             }
         }
     }
@@ -190,22 +189,168 @@ class TractiveService {
         refreshTask = nil
     }
 
-    // MARK: - Hike Mode (LIVE tracking + trail recording)
+    // MARK: - Event Channel (real-time updates)
 
-    /// Start hike mode: enable LIVE on visible pet trackers + fast refresh (5s) + accumulate trail
+    /// Start listening to Tractive's streaming event channel
+    private func startChannel() {
+        channelTask?.cancel()
+        channelTask = Task {
+            var retryDelay: TimeInterval = 1
+            while !Task.isCancelled {
+                do {
+                    try await listenChannel()
+                    // If listenChannel returns normally, reconnect
+                    retryDelay = 1
+                } catch is CancellationError {
+                    return
+                } catch {
+                    print("🐾 Channel error: \(error), retrying in \(Int(retryDelay))s")
+                }
+                try? await Task.sleep(for: .seconds(retryDelay))
+                retryDelay = min(retryDelay * 2, 30)
+            }
+        }
+    }
+
+    /// Open a streaming POST to the channel endpoint and process events
+    private func listenChannel() async throws {
+        guard let token else { throw TractiveError.notAuthenticated }
+
+        try await refreshTokenIfNeeded()
+
+        let url = URL(string: Self.channelURL)!
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
+        req.setValue(Self.clientId, forHTTPHeaderField: "x-tractive-client")
+        req.setValue(token.userId, forHTTPHeaderField: "x-tractive-user")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 90 // Keep-alive comes every ~30s
+
+        print("🐾 Channel: connecting...")
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw TractiveError.invalidResponse
+        }
+        if http.statusCode == 401 {
+            // Token expired, force re-auth
+            if let creds = Self.credentials {
+                self.token = try await authenticate(email: creds.email, password: creds.password)
+            }
+            throw TractiveError.authFailed
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            print("🐾 Channel: HTTP \(http.statusCode)")
+            throw TractiveError.httpError(http.statusCode)
+        }
+
+        print("🐾 Channel: connected, listening for events...")
+
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty || trimmed == "keep-alive" { continue }
+
+            guard let data = trimmed.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                continue
+            }
+
+            await handleChannelEvent(json)
+        }
+
+        print("🐾 Channel: stream ended")
+    }
+
+    /// Process a single event from the channel
+    private func handleChannelEvent(_ event: [String: Any]) async {
+        // The channel sends different message types
+        let msgType = event["message"] as? String
+
+        // Position update
+        if let latlong = event["latlong"] as? [Double], latlong.count >= 2,
+           let time = event["time"] as? TimeInterval {
+            let trackerId = event["tracker_id"] as? String ?? event["_id"] as? String ?? ""
+            let pos = TractivePosition(
+                coordinate: CLLocationCoordinate2D(latitude: latlong[0], longitude: latlong[1]),
+                altitude: event["altitude"] as? Double,
+                speed: event["speed"] as? Double,
+                accuracy: event["pos_uncertainty"] as? Double,
+                timestamp: Date(timeIntervalSince1970: time)
+            )
+
+            if let petId = trackerToPet[trackerId],
+               let idx = pets.firstIndex(where: { $0.id == petId }) {
+                pets[idx].position = pos
+                print("🐾 Channel: \(pets[idx].name) moved to \(pos.coordinate.latitude),\(pos.coordinate.longitude)")
+
+                // Accumulate trail in hike mode
+                if isLiveTracking {
+                    var trail = petTrails[petId] ?? []
+                    if let last = trail.last {
+                        let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
+                            .distance(from: CLLocation(latitude: pos.coordinate.latitude, longitude: pos.coordinate.longitude))
+                        if dist > 3 {
+                            trail.append(pos.coordinate)
+                            petTrails[petId] = trail
+                        }
+                    } else {
+                        petTrails[petId] = [pos.coordinate]
+                    }
+                }
+
+                lastPositionUpdate = Date()
+            } else {
+                print("🐾 Channel: position for unknown tracker \(trackerId)")
+            }
+            return
+        }
+
+        // Battery / hardware update
+        if let batteryLevel = event["battery_level"] as? Int {
+            let trackerId = event["tracker_id"] as? String ?? event["_id"] as? String ?? ""
+            if let petId = trackerToPet[trackerId],
+               let idx = pets.firstIndex(where: { $0.id == petId }) {
+                pets[idx].batteryLevel = batteryLevel
+                pets[idx].isCharging = (event["charging_state"] as? String) == "CHARGING"
+                print("🐾 Channel: \(pets[idx].name) battery=\(batteryLevel)%")
+                lastPositionUpdate = Date()
+            }
+            return
+        }
+
+        // Log other event types for debugging
+        if let msgType {
+            print("🐾 Channel event: \(msgType)")
+        }
+    }
+
+    // MARK: - Hike Mode (LIVE tracking)
+
+    /// Start hike mode: enable LIVE on visible pet trackers
     func startHikeMode() async {
         guard let token else { return }
 
         // Clear old trails
         petTrails.removeAll()
 
-        // Enable LIVE tracking on visible pets' trackers
         do {
             try await refreshTokenIfNeeded()
         } catch { return }
 
+        // Enable LIVE tracking on visible pets' trackers
         for pet in visiblePets {
-            _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/on", token: token)
+            print("🐾 Enabling LIVE on \(pet.name) (\(pet.trackerId))")
+            do {
+                let liveData = try await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/on", token: token, method: "POST")
+                if let raw = String(data: liveData, encoding: .utf8) {
+                    print("🐾 LIVE ON response: \(raw.prefix(300))")
+                }
+            } catch {
+                print("🐾 LIVE ON FAILED for \(pet.name): \(error)")
+            }
             // Seed trail with current position
             if let pos = pet.position {
                 petTrails[pet.id] = [pos.coordinate]
@@ -213,36 +358,23 @@ class TractiveService {
         }
 
         isLiveTracking = true
+        print("🐾 HIKE MODE ON")
 
-        // Fast refresh loop: every 5s during hike
+        // Keep LIVE active by re-sending command every 2 minutes
         liveRefreshTask?.cancel()
         liveRefreshTask = Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(5))
-                await refreshPositions()
-
-                // Append new positions to trails
+                try? await Task.sleep(for: .seconds(120))
+                guard let token = self.token else { continue }
                 for pet in visiblePets {
-                    guard let pos = pet.position else { continue }
-                    var trail = petTrails[pet.id] ?? []
-                    // Only add if moved (avoid duplicates)
-                    if let last = trail.last {
-                        let dist = CLLocation(latitude: last.latitude, longitude: last.longitude)
-                            .distance(from: CLLocation(latitude: pos.coordinate.latitude, longitude: pos.coordinate.longitude))
-                        if dist > 3 { // at least 3m movement
-                            trail.append(pos.coordinate)
-                            petTrails[pet.id] = trail
-                        }
-                    } else {
-                        petTrails[pet.id] = [pos.coordinate]
-                    }
+                    _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/on", token: token, method: "POST")
+                    print("🐾 Re-sent LIVE ON for \(pet.name)")
                 }
-                lastPositionUpdate = Date()
             }
         }
     }
 
-    /// Stop hike mode: disable LIVE tracking + return to normal refresh
+    /// Stop hike mode: disable LIVE tracking
     func stopHikeMode() async {
         guard let token else { return }
 
@@ -251,7 +383,8 @@ class TractiveService {
 
         // Disable LIVE on all trackers
         for pet in pets {
-            _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/off", token: token)
+            print("🐾 Disabling LIVE on \(pet.name)")
+            _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/off", token: token, method: "POST")
         }
 
         isLiveTracking = false
@@ -272,6 +405,46 @@ class TractiveService {
         } catch {
             lastError = "History: \(error.localizedDescription)"
             return []
+        }
+    }
+
+    // MARK: - Fallback: refresh positions via REST (used by auto-refresh)
+
+    /// Refresh all visible pet positions
+    func refreshPositions() async {
+        guard let token else { return }
+
+        do {
+            try await refreshTokenIfNeeded()
+        } catch {
+            lastError = error.localizedDescription
+            return
+        }
+
+        for i in pets.indices where pets[i].isVisible {
+            do {
+                let pos = try await fetchPosition(trackerId: pets[i].trackerId, token: token)
+                pets[i].position = pos
+            } catch {
+                // Silently continue on refresh failures
+            }
+        }
+        lastPositionUpdate = Date()
+    }
+
+    /// Refresh battery for all pets
+    func refreshBatteries() async {
+        guard let token else { return }
+
+        do {
+            try await refreshTokenIfNeeded()
+        } catch { return }
+
+        for i in pets.indices {
+            if let hw = try? await fetchHardware(trackerId: pets[i].trackerId, token: token) {
+                pets[i].batteryLevel = hw.batteryLevel
+                pets[i].isCharging = hw.isCharging
+            }
         }
     }
 
@@ -330,7 +503,6 @@ class TractiveService {
         for item in list {
             guard let petId = item["_id"] as? String else { continue }
 
-            // Always fetch full pet object (list only has stubs without device_id)
             guard let detailData = try? await request(path: "/trackable_object/\(petId)", token: token),
                   let full = try? JSONSerialization.jsonObject(with: detailData) as? [String: Any],
                   let deviceId = full["device_id"] as? String else {
@@ -412,12 +584,16 @@ class TractiveService {
 
     // MARK: - HTTP Helper
 
-    private func request(path: String, token: TractiveToken) async throws -> Data {
+    private func request(path: String, token: TractiveToken, method: String = "GET") async throws -> Data {
         let url = URL(string: "\(Self.baseURL)\(path)")!
         var req = URLRequest(url: url)
+        req.httpMethod = method
         req.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
         req.setValue(Self.clientId, forHTTPHeaderField: "x-tractive-client")
         req.setValue(token.userId, forHTTPHeaderField: "x-tractive-user")
+        if method == "POST" {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
 
         let (data, response) = try await URLSession.shared.data(for: req)
         try checkHTTPResponse(response)

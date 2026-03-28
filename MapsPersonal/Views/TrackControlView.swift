@@ -46,6 +46,17 @@ struct TrackControlView: View {
 
             Spacer()
 
+            // Heart rate
+            if let hr = recorder.heartRateService.currentHeartRate {
+                HStack(spacing: 4) {
+                    Image(systemName: "heart.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                    Text("\(hr)")
+                        .font(.system(.body, design: .monospaced))
+                }
+            }
+
             Button(action: onStop) {
                 Image(systemName: "stop.fill")
                     .font(.title3)
