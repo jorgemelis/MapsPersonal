@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QSpinBox,
     QProgressBar, QTextEdit, QGroupBox, QSplitter, QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtCore import Qt, QUrl, QTimer, QThread, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebChannel import QWebChannel
@@ -176,6 +176,65 @@ def geocode(query: str) -> list[dict]:
             return json.loads(resp.read())
     except Exception:
         return []
+
+
+# ---------------------------------------------------------------------------
+# Mini tile server for MBTiles preview
+# ---------------------------------------------------------------------------
+
+import http.server
+import threading
+
+class MBTilesHandler(http.server.BaseHTTPRequestHandler):
+    """Serve tiles from an MBTiles file via HTTP."""
+    db_path = None
+
+    def do_GET(self):
+        # CORS
+        if self.path.startswith("/tiles/"):
+            parts = self.path.replace("/tiles/", "").split("/")
+            if len(parts) == 3:
+                try:
+                    z = int(parts[0])
+                    x = int(parts[1])
+                    y = int(parts[2].replace(".png", ""))
+                    # TMS y-flip
+                    tms_y = (2 ** z) - 1 - y
+                    conn = sqlite3.connect(self.db_path)
+                    row = conn.execute(
+                        "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+                        (z, x, tms_y)).fetchone()
+                    conn.close()
+                    if row:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/png")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(row[0])
+                        return
+                except Exception:
+                    pass
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass  # suppress logs
+
+
+_preview_server = None
+_preview_port = 8765
+
+def start_preview_server(mbtiles_path: str) -> int:
+    """Start (or restart) the preview tile server. Returns the port."""
+    global _preview_server, _preview_port
+    if _preview_server:
+        _preview_server.shutdown()
+    MBTilesHandler.db_path = mbtiles_path
+    _preview_server = http.server.HTTPServer(("127.0.0.1", _preview_port), MBTilesHandler)
+    t = threading.Thread(target=_preview_server.serve_forever, daemon=True)
+    t.start()
+    return _preview_port
 
 
 # ---------------------------------------------------------------------------
@@ -577,6 +636,11 @@ class GeologyManagerWidget(QWidget):
         self.refresh_lib_btn.clicked.connect(self.load_maps_library)
         lib_btn_layout.addWidget(self.refresh_lib_btn)
 
+        self.preview_btn = QPushButton("Preview")
+        self.preview_btn.setStyleSheet("font-size: 12px; padding: 6px 12px;")
+        self.preview_btn.clicked.connect(self.on_preview)
+        lib_btn_layout.addWidget(self.preview_btn)
+
         self.legend_btn = QPushButton("Legend")
         self.legend_btn.setStyleSheet("font-size: 12px; padding: 6px 12px;")
         self.legend_btn.clicked.connect(self.on_view_legend)
@@ -871,6 +935,44 @@ class GeologyManagerWidget(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Transfer failed: {e}")
 
+    # -- Preview --
+
+    def on_preview(self):
+        """Preview the selected MBTiles on the Leaflet map."""
+        idx = self.maps_list.currentIndex()
+        if idx < 0:
+            return
+
+        mbtiles_path = Path(self.maps_list.currentData())
+        if not mbtiles_path.exists():
+            QMessageBox.warning(self, "Error", "Map file not found")
+            return
+
+        # Get bounds from metadata
+        bbox = self._get_bbox_from_mbtiles(mbtiles_path)
+        if not bbox:
+            QMessageBox.warning(self, "Preview", "Could not read map bounds.")
+            return
+
+        min_lat, min_lon, max_lat, max_lon = bbox
+        center_lat = (min_lat + max_lat) / 2
+        center_lon = (min_lon + max_lon) / 2
+
+        # Start tile server
+        port = start_preview_server(str(mbtiles_path))
+        tile_url = f"http://127.0.0.1:{port}/tiles/{{z}}/{{x}}/{{y}}.png"
+
+        # Add overlay to Leaflet map and fly to bounds
+        js = (
+            f"if (window._previewLayer) map.removeLayer(window._previewLayer);\n"
+            f"window._previewLayer = L.tileLayer('{tile_url}', {{"
+            f"  opacity: 0.7, maxZoom: 18"
+            f"}}).addTo(map);\n"
+            f"map.fitBounds([[{min_lat},{min_lon}],[{max_lat},{max_lon}]]);\n"
+        )
+        self.map_view.page().runJavaScript(js)
+        self.log.append(f"\nPreviewing: {mbtiles_path.stem}")
+
     # -- Legend --
 
     def on_view_legend(self):
@@ -882,10 +984,23 @@ class GeologyManagerWidget(QWidget):
         mbtiles_path = Path(self.maps_list.currentData())
         stem = mbtiles_path.stem
 
-        # Only supported for Spain (IGME)
-        if not stem.startswith("spain_igme"):
+        # Detect source type and use appropriate legend method
+        if stem.startswith("belgium"):
+            self._fetch_wms_legend(mbtiles_path, "https://gisel.naturalsciences.be/geoserver/gisel/bel40k/ows", "bel40k")
+            return
+        elif stem.startswith("ontario"):
+            self._fetch_arcgis_legend(mbtiles_path,
+                "https://ws.lioservices.lrc.gov.on.ca/arcgis2/rest/services/GeologyOntario/GeologyOntario_Map/MapServer/legend",
+                57)
+            return
+        elif stem.startswith("quebec"):
+            self._fetch_wms_legend(mbtiles_path,
+                "https://servicesvectoriels.atlas.gouv.qc.ca/IDS_SGM_EN_WMS/service.svc/get",
+                "SGM_EN:General_geology")
+            return
+        elif not stem.startswith("spain_igme"):
             QMessageBox.information(self, "Legend",
-                "Official legend download is currently only supported for IGME (Spain) maps.")
+                "Legend not available for this map source.")
             return
 
         # Find the sheet number from the MBTiles bbox
@@ -994,6 +1109,91 @@ class GeologyManagerWidget(QWidget):
                 line = line.strip()
                 if line:
                     self.log.append(f"  {line}")
+
+    def _fetch_wms_legend(self, mbtiles_path: Path, wms_url: str, layer: str):
+        """Download legend via WMS GetLegendGraphic."""
+        legend_dir = mbtiles_path.parent / "legends"
+        legend_dir.mkdir(parents=True, exist_ok=True)
+        out_path = legend_dir / f"legend_{mbtiles_path.stem}.png"
+
+        if out_path.exists():
+            self._open_file(out_path)
+            return
+
+        self.log.append(f"\nDownloading legend for {layer}...")
+        try:
+            import requests
+            r = requests.get(wms_url, params={
+                "SERVICE": "WMS", "VERSION": "1.1.1",
+                "REQUEST": "GetLegendGraphic",
+                "LAYER": layer, "FORMAT": "image/png",
+            }, timeout=30)
+            if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
+                out_path.write_bytes(r.content)
+                self.log.append(f"Legend saved: {out_path.name}")
+                self._open_file(out_path)
+            else:
+                self.log.append("Legend not available from this WMS service.")
+        except Exception as e:
+            self.log.append(f"Legend download failed: {e}")
+
+    def _fetch_arcgis_legend(self, mbtiles_path: Path, legend_url: str, layer_id: int):
+        """Download legend from ArcGIS MapServer and render as PNG."""
+        legend_dir = mbtiles_path.parent / "legends"
+        legend_dir.mkdir(parents=True, exist_ok=True)
+        out_path = legend_dir / f"legend_{mbtiles_path.stem}.png"
+
+        if out_path.exists():
+            self._open_file(out_path)
+            return
+
+        self.log.append(f"\nDownloading ArcGIS legend (layer {layer_id})...")
+        try:
+            import requests
+            r = requests.get(legend_url, params={"f": "json"}, timeout=30)
+            data = json.loads(r.content)
+
+            entries = []
+            for layer in data.get("layers", []):
+                if layer.get("layerId") == layer_id:
+                    entries = layer.get("legend", [])
+                    break
+
+            if not entries:
+                self.log.append("No legend entries found.")
+                return
+
+            # Render legend image with matplotlib
+            import matplotlib.pyplot as plt
+            import matplotlib.patches as mpatches
+            import base64
+            from io import BytesIO
+            from PIL import Image as PILImage
+
+            fig_height = max(4, len(entries) * 0.18)
+            fig, ax = plt.subplots(figsize=(6, fig_height))
+            ax.set_xlim(0, 10)
+            ax.set_ylim(0, len(entries))
+            ax.axis("off")
+
+            for i, entry in enumerate(reversed(entries)):
+                y = i
+                label = entry.get("label", "")
+                img_data = entry.get("imageData", "")
+                if img_data:
+                    img_bytes = base64.b64decode(img_data)
+                    img = PILImage.open(BytesIO(img_bytes))
+                    ax.imshow(img, extent=[0.2, 0.8, y, y + 0.8], aspect="auto")
+                ax.text(1.0, y + 0.4, label, va="center", fontsize=6)
+
+            plt.tight_layout()
+            fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+            plt.close(fig)
+
+            self.log.append(f"Legend saved: {out_path.name} ({len(entries)} entries)")
+            self._open_file(out_path)
+        except Exception as e:
+            self.log.append(f"Legend download failed: {e}")
 
     def _open_cropper(self, image_path: Path):
         """Open the image cropper dialog."""
