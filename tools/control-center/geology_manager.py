@@ -87,12 +87,28 @@ SOURCES = {
         source_type="wms", format="png", max_zoom=12, min_zoom=6,
         layers="0", wms_version="1.1.1",
     ),
+    "ontario": GeoSource(
+        id="ontario_ogs", name="Ontario Bedrock Geology",
+        country="Canada (Ontario)", scale="1:250,000", attribution="Ontario Geological Survey",
+        tile_url="https://ws.lioservices.lrc.gov.on.ca/arcgis2/rest/services/GeologyOntario/GeologyOntario_Map/MapServer/export",
+        source_type="arcgis_rest", format="png", max_zoom=15, min_zoom=8,
+        layers="show:57",
+    ),
+    "quebec": GeoSource(
+        id="quebec_sigeom", name="SIGEOM Géologie du socle",
+        country="Canada (Québec)", scale="1:250,000", attribution="MRNF Québec",
+        tile_url="https://servicesvectoriels.atlas.gouv.qc.ca/IDS_SGM_EN_WMS/service.svc/get",
+        source_type="wms", format="png", max_zoom=15, min_zoom=8,
+        layers="SGM_EN:General_geology",
+    ),
 }
 
 COUNTRY_BOUNDS = {
     "spain":   (35.7, -9.5, 43.8, 4.4),
     "france":  (41.3, -5.2, 51.1, 9.6),
     "belgium": (49.5, 2.5, 51.5, 6.4),
+    "ontario": (41.7, -95.2, 56.9, -74.3),
+    "quebec":  (45.0, -79.8, 62.6, -57.1),
     "canada":  (41.7, -141.0, 83.1, -52.6),
 }
 
