@@ -85,7 +85,7 @@ SOURCES = {
         country="Canada", scale="1:5,000,000", attribution="NRCan",
         tile_url="https://maps-cartes.services.geo.ca/server_serveur/services/NRCan/gsc_bedrock_geology_en/MapServer/WMSServer",
         source_type="wms", format="png", max_zoom=12, min_zoom=6,
-        layers="gsc_bedrock_geology_en", wms_version="1.3.0",
+        layers="0", wms_version="1.1.1",
     ),
 }
 

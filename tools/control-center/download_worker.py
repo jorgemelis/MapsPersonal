@@ -57,6 +57,7 @@ def fetch_wms(session, url, layers, wms_version, srs, x, y, z):
     params = {
         "SERVICE": "WMS", "VERSION": wms_version,
         "REQUEST": "GetMap", "LAYERS": layers,
+        "STYLES": "",
         crs: srs, "BBOX": bbox_str,
         "WIDTH": "256", "HEIGHT": "256",
         "FORMAT": "image/png", "TRANSPARENT": "TRUE",
