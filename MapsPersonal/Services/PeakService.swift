@@ -58,19 +58,27 @@ class PeakService {
         out body;
         """
 
-        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://overpass-api.de/api/interpreter?data=\(encoded)") else {
-            return
-        }
+        let url = URL(string: "https://overpass-api.de/api/interpreter")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = "data=\(query)".data(using: .utf8)
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
         isLoading = true
         defer { isLoading = false }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            let response = try JSONDecoder().decode(OverpassResponse.self, from: data)
+            let (data, response) = try await URLSession.shared.data(for: request)
 
-            let newPeaks = response.elements.compactMap { elem -> Peak? in
+            // Overpass may return HTML errors (rate limit, server busy)
+            if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+                print("Peak fetch: HTTP \(http.statusCode)")
+                return
+            }
+
+            let decoded = try JSONDecoder().decode(OverpassResponse.self, from: data)
+
+            let newPeaks = decoded.elements.compactMap { elem -> Peak? in
                 guard let name = elem.tags?["name"] else { return nil }
                 let ele = elem.tags?["ele"].flatMap { Int(Double($0) ?? 0) }
                 return Peak(id: elem.id, name: name, elevation: ele, lat: elem.lat, lon: elem.lon)
