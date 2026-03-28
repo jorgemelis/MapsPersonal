@@ -3,6 +3,8 @@ import SwiftUI
 // MARK: - Settings View
 
 struct SettingsView: View {
+    var tractive: TractiveService
+    @Bindable var mapState: MapState
     @State private var profile = UserProfile()
     @State private var useCustomMaxHR = false
     @State private var customMaxHR = 160
@@ -20,6 +22,59 @@ struct SettingsView: View {
                     OptionalStepper(label: "Weight", unit: "kg", value: binding(\.weightKg), range: 30...200, step: 0.5, format: "%.1f")
                     OptionalStepper(label: "Height", unit: "m", value: binding(\.heightM), range: 1.0...2.5, step: 0.01, format: "%.2f")
                     OptionalStepper(label: "Waist", unit: "cm", value: binding(\.waistCm), range: 50...200, step: 0.5, format: "%.1f")
+                }
+
+                // MARK: - Track Recording
+                Section {
+                    Toggle("Auto-save to iCloud", isOn: $profile.autoSaveICloud)
+
+                    Stepper("Temp interval: \(profile.tempIntervalMinutes) min",
+                            value: $profile.tempIntervalMinutes, in: 1...30)
+
+                    Stepper("Temp elev. threshold: \(profile.tempElevationThreshold) m",
+                            value: $profile.tempElevationThreshold, in: 50...500, step: 50)
+                } header: {
+                    Text("Track Recording")
+                } footer: {
+                    Text("Temperature is recorded from Open-Meteo weather forecast at the configured interval or when cumulative elevation change exceeds the threshold.")
+                        .font(.caption2)
+                }
+
+                // MARK: - Map
+                Section {
+                    Picker("Base Layer", selection: $mapState.activeBaseLayer) {
+                        ForEach(MapLayer.baseLayers.filter { $0.tileURLTemplate != nil }) { layer in
+                            Text(layer.displayName).tag(layer)
+                        }
+                    }
+
+                    Toggle("Peaks (OSM)", isOn: $mapState.showPeaks)
+
+                    Toggle("Hillshade", isOn: $mapState.showHillshade)
+                    if mapState.showHillshade {
+                        HStack {
+                            Text("Opacity")
+                                .font(.caption)
+                            Slider(value: $mapState.hillshadeOpacity, in: 0.1...1.0, step: 0.1)
+                            Text(String(format: "%.0f%%", mapState.hillshadeOpacity * 100))
+                                .font(.caption)
+                                .frame(width: 36, alignment: .trailing)
+                        }
+                    }
+
+                    Toggle("Contour Lines", isOn: $mapState.showContours)
+                    if mapState.showContours {
+                        HStack {
+                            Text("Opacity")
+                                .font(.caption)
+                            Slider(value: $mapState.contourOpacity, in: 0.1...1.0, step: 0.1)
+                            Text(String(format: "%.0f%%", mapState.contourOpacity * 100))
+                                .font(.caption)
+                                .frame(width: 36, alignment: .trailing)
+                        }
+                    }
+                } header: {
+                    Text("Map")
                 }
 
                 // MARK: - Heart Rate
@@ -131,6 +186,65 @@ struct SettingsView: View {
                     Text("Credentials are stored securely in the device Keychain. Restart the app after saving to connect.")
                         .font(.caption2)
                 }
+
+                // MARK: - Pets (discovered from Tractive)
+                if tractive.isConnected && !tractive.pets.isEmpty {
+                    Section {
+                        ForEach(tractive.pets) { pet in
+                            HStack {
+                                Text(pet.emoji)
+                                    .font(.title2)
+                                Text(pet.name)
+                                    .font(.body)
+
+                                Spacer()
+
+                                if let battery = pet.batteryLevel {
+                                    HStack(spacing: 2) {
+                                        Image(systemName: batteryIcon(level: battery, charging: pet.isCharging))
+                                            .foregroundStyle(batteryColor(battery))
+                                            .font(.caption)
+                                        Text("\(battery)%")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Toggle("", isOn: Binding(
+                                    get: { pet.isVisible },
+                                    set: { _ in tractive.togglePet(pet.id) }
+                                ))
+                                .labelsHidden()
+                            }
+                        }
+                    } header: {
+                        Text("Pets")
+                    } footer: {
+                        Text("Toggle visibility on the map. Pets with LIVE tracking enabled during hike recording update every few seconds.")
+                            .font(.caption2)
+                    }
+                }
+
+                // MARK: - About
+                Section {
+                    HStack {
+                        Text("Version")
+                        Spacer()
+                        Text("\(appVersion) (\(buildNumber))")
+                            .foregroundStyle(.secondary)
+                    }
+
+                    NavigationLink("Credits") {
+                        creditsView
+                    }
+
+                    Button("Reset Map to Defaults") {
+                        mapState.resetToDefaults()
+                    }
+                    .foregroundStyle(.red)
+                } header: {
+                    Text("About")
+                }
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -145,6 +259,54 @@ struct SettingsView: View {
                     customMaxHR = override
                 }
             }
+        }
+    }
+
+    // MARK: - About Helpers
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
+    private var buildNumber: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+    }
+
+    private var creditsView: some View {
+        List {
+            Section("Map Engine") {
+                creditRow("MapLibre Native", "BSD-2-Clause", "maplibre.org")
+            }
+            Section("Map Data") {
+                creditRow("OpenStreetMap", "ODbL", "openstreetmap.org")
+                creditRow("ESRI World Imagery", "Esri License", "arcgis.com")
+                creditRow("IGN Spain (MTN/PNOA)", "CC BY 4.0", "ign.es")
+                creditRow("IGME Geological", "CC BY 4.0", "igme.es")
+                creditRow("MapTiler Terrain", "MapTiler License", "maptiler.com")
+            }
+            Section("Services") {
+                creditRow("Open-Meteo", "CC BY 4.0", "open-meteo.com")
+                creditRow("Nominatim / OSM", "ODbL", "nominatim.org")
+                creditRow("Overpass API", "ODbL", "overpass-api.de")
+                creditRow("Tractive", "Commercial", "tractive.com")
+                creditRow("Apple HealthKit", "Apple", "developer.apple.com")
+            }
+            Section("Development") {
+                creditRow("Claude Code", "Anthropic", "claude.ai/code")
+                creditRow("Xcode / Swift / SwiftUI", "Apple", "developer.apple.com")
+            }
+        }
+        .navigationTitle("Credits")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func creditRow(_ name: String, _ license: String, _ url: String) -> some View {
+        HStack {
+            Text(name)
+            Spacer()
+            Text(license)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -172,6 +334,25 @@ struct SettingsView: View {
         case 3: return .orange
         case 4: return .red
         default: return .gray
+        }
+    }
+
+    private func batteryIcon(level: Int, charging: Bool) -> String {
+        if charging { return "battery.100.bolt" }
+        switch level {
+        case 0..<15: return "battery.0"
+        case 15..<40: return "battery.25"
+        case 40..<60: return "battery.50"
+        case 60..<85: return "battery.75"
+        default: return "battery.100"
+        }
+    }
+
+    private func batteryColor(_ level: Int) -> Color {
+        switch level {
+        case 0..<20: return .red
+        case 20..<50: return .orange
+        default: return .green
         }
     }
 

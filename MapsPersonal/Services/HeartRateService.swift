@@ -25,8 +25,13 @@ class HeartRateService {
         guard isAvailable else { return false }
 
         let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
+        let workoutType = HKObjectType.workoutType()
+        let elevationType = HKQuantityType.quantityType(forIdentifier: .flightsClimbed)!
         do {
-            try await healthStore.requestAuthorization(toShare: [], read: [hrType])
+            try await healthStore.requestAuthorization(
+                toShare: [workoutType],
+                read: [hrType, workoutType, elevationType]
+            )
             let status = healthStore.authorizationStatus(for: hrType)
             isAuthorized = status == .sharingAuthorized || status != .notDetermined
             return isAuthorized
@@ -87,6 +92,55 @@ class HeartRateService {
             }
         } catch {
             return []
+        }
+    }
+
+    // MARK: - Save Workout to Health
+
+    /// Save a hiking workout to HealthKit after track recording
+    func saveWorkout(
+        start: Date,
+        end: Date,
+        distance: Double,
+        elevationGain: Double
+    ) async -> Bool {
+        guard isAvailable else { return false }
+
+        let workout = HKWorkout(
+            activityType: .hiking,
+            start: start,
+            end: end,
+            duration: end.timeIntervalSince(start),
+            totalEnergyBurned: nil,
+            totalDistance: HKQuantity(unit: .meter(), doubleValue: distance),
+            metadata: [
+                HKMetadataKeyIndoorWorkout: false,
+                "MapsPersonalTrack": true
+            ]
+        )
+
+        do {
+            try await healthStore.save(workout)
+
+            // Add elevation gain as a sample associated with the workout
+            if elevationGain > 0 {
+                let elevationType = HKQuantityType.quantityType(forIdentifier: .flightsClimbed)!
+                // Convert meters to flights (1 flight ≈ 3m)
+                let flights = elevationGain / 3.0
+                let elevationSample = HKQuantitySample(
+                    type: elevationType,
+                    quantity: HKQuantity(unit: .count(), doubleValue: flights),
+                    start: start,
+                    end: end
+                )
+                try await healthStore.addSamples([elevationSample], to: workout)
+            }
+
+            print("HeartRateService: Workout saved to Health (\(String(format: "%.1f", distance))m, \(String(format: "%.0f", elevationGain))m gain)")
+            return true
+        } catch {
+            print("HeartRateService: Failed to save workout: \(error)")
+            return false
         }
     }
 

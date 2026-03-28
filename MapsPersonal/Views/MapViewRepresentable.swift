@@ -12,6 +12,7 @@ struct MapViewRepresentable: UIViewRepresentable {
 
     // Explicit values so SwiftUI detects changes and calls updateUIView
     var terrainVersion: Int
+    var trackVersion: Int  // triggers updateUIView when new GPS points are added
     var petPositionTimestamp: Date?  // triggers updateUIView when pet moves
 
     func makeUIView(context: Context) -> MLNMapView {
@@ -153,6 +154,23 @@ struct MapViewRepresentable: UIViewRepresentable {
             pin.title = String(format: "%.6f, %.6f", coord.latitude, coord.longitude)
             mapView.addAnnotation(pin)
             mapView.selectAnnotation(pin, animated: true, completionHandler: nil)
+
+            // If geological overlay is active, identify the unit
+            if parent.mapState.activeOverlays.contains(.igmeGeological) ||
+               parent.mapState.activeDynamicOverlays.contains(where: { id in
+                   id.lowercased().contains("geolog") || id.lowercased().contains("magna")
+               }) {
+                Task {
+                    if let info = await GeologyIdentifyService.identify(at: coord) {
+                        await MainActor.run {
+                            pin.subtitle = "[\(info.unitId)] \(info.description)"
+                            // Re-select to show updated callout
+                            mapView.deselectAnnotation(pin, animated: false)
+                            mapView.selectAnnotation(pin, animated: true, completionHandler: nil)
+                        }
+                    }
+                }
+            }
         }
 
         func mapView(_ mapView: MLNMapView, viewFor annotation: MLNAnnotation) -> MLNAnnotationView? {
@@ -283,12 +301,20 @@ struct MapViewRepresentable: UIViewRepresentable {
                 style.addLayer(layer)
             }
 
+            // Update opacity for existing dynamic layers
+            for id in desired {
+                let layerId = "dyn-\(id)-layer"
+                if let styleLayer = style.layer(withIdentifier: layerId) as? MLNRasterStyleLayer {
+                    let opacity = state.dynamicOverlayOpacity[id] ?? 0.7
+                    styleLayer.rasterOpacity = NSExpression(forConstantValue: NSNumber(value: opacity))
+                }
+            }
+
             currentDynamicLayers = desired
         }
 
         private func addLayer(_ layer: MapLayer, to style: MLNStyle, opacity: Double) {
-            let urlOverride: String? = parent.mapState.offlineTileURLs[layer]
-            guard let source = TileSourceFactory.makeSource(for: layer, urlOverride: urlOverride) else {
+            guard let source = TileSourceFactory.makeSource(for: layer) else {
                 print("⚠️ Skipping layer \(layer.rawValue): no URL available")
                 return
             }

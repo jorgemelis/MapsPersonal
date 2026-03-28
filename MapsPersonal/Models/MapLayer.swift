@@ -14,8 +14,6 @@ enum MapLayer: String, CaseIterable, Identifiable {
     case ignMTN
     case ignPNOA
     case igmeGeological
-    case igmeGeologicalOffline
-    case ignMTNOffline
 
     var id: String { rawValue }
 
@@ -25,17 +23,14 @@ enum MapLayer: String, CaseIterable, Identifiable {
         case .esriImagery: return "Satélite (ESRI)"
         case .ignMTN: return "Topográfico (IGN)"
         case .ignPNOA: return "Ortofoto (PNOA)"
-        case .igmeGeological: return "Geológico MAGNA 50 (online)"
-        case .igmeGeologicalOffline: return "Geológico MAGNA 50 (offline)"
-        case .ignMTNOffline: return "Topográfico IGN (offline)"
+        case .igmeGeological: return "Geológico MAGNA 50"
         }
     }
 
     var category: MapLayerCategory {
         switch self {
         case .osm, .esriImagery, .ignMTN, .ignPNOA: return .base
-        case .ignMTNOffline: return .base
-        case .igmeGeological, .igmeGeologicalOffline: return .overlay
+        case .igmeGeological: return .overlay
         }
     }
 
@@ -53,8 +48,6 @@ enum MapLayer: String, CaseIterable, Identifiable {
         case .ignMTN: return 20
         case .ignPNOA: return 20
         case .igmeGeological: return 16
-        case .igmeGeologicalOffline: return 15
-        case .ignMTNOffline: return 16
         }
     }
 
@@ -62,7 +55,6 @@ enum MapLayer: String, CaseIterable, Identifiable {
         category == .overlay
     }
 
-    /// Returns nil for layers that need a dynamic URL (e.g. local tile server)
     var tileURLTemplate: String? {
         switch self {
         case .osm:
@@ -75,10 +67,6 @@ enum MapLayer: String, CaseIterable, Identifiable {
             return "https://www.ign.es/wmts/pnoa-ma?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=OI.OrthoimageCoverage&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg"
         case .igmeGeological:
             return "https://mapas.igme.es/gis/rest/services/Cartografia_Geologica/IGME_MAGNA_50/MapServer/export?bbox={bbox-epsg-3857}&bboxSR=3857&imageSR=3857&size=256,256&format=png32&transparent=true&layers=show:0,2&f=image"
-        case .igmeGeologicalOffline:
-            return nil // Set dynamically from LocalTileServer
-        case .ignMTNOffline:
-            return nil // Set dynamically from LocalTileServer
         }
     }
 
@@ -87,8 +75,7 @@ enum MapLayer: String, CaseIterable, Identifiable {
         case .osm: return "© OpenStreetMap contributors"
         case .esriImagery: return "© Esri"
         case .ignMTN, .ignPNOA: return "© IGN España"
-        case .igmeGeological, .igmeGeologicalOffline: return "© IGME"
-        case .ignMTNOffline: return "© IGN España"
+        case .igmeGeological: return "© IGME"
         }
     }
 

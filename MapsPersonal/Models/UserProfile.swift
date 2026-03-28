@@ -38,6 +38,21 @@ class UserProfile {
         didSet { save() }
     }
 
+    // MARK: - Track Recording Settings
+
+    /// Auto-save track to iCloud when saving
+    var autoSaveICloud: Bool {
+        didSet { save() }
+    }
+    /// Temperature recording interval in minutes
+    var tempIntervalMinutes: Int {
+        didSet { save() }
+    }
+    /// Temperature recording elevation threshold in meters
+    var tempElevationThreshold: Int {
+        didSet { save() }
+    }
+
     // Tanaka et al. (2001): HRmax = 208 - 0.7 * age
     var calculatedMaxHR: Int? {
         guard let age else { return nil }
@@ -64,6 +79,24 @@ class UserProfile {
         let eccentricity = sqrt(1 - squared)
         return 364.2 - 365.5 * eccentricity
     }
+
+    /// Returns the zone index (0-based) and zone for the given BPM, or nil if below Z1
+    func zone(for bpm: Int) -> (index: Int, zone: HeartRateZone)? {
+        guard let maxHR else { return nil }
+        for (i, z) in zones.enumerated() {
+            let range = z.bpmRange(maxHR: maxHR)
+            if range.contains(bpm) {
+                return (i, z)
+            }
+        }
+        // Above max zone
+        if let last = zones.last, bpm > last.bpmRange(maxHR: maxHR).upperBound {
+            return (zones.count - 1, last)
+        }
+        return nil
+    }
+
+    static let zoneColors: [String] = ["blue", "green", "yellow", "orange", "red"]
 
     static let defaultZones: [HeartRateZone] = [
         HeartRateZone(name: "Recovery", minPct: 50, maxPct: 60),
@@ -93,6 +126,14 @@ class UserProfile {
         } else {
             self.zones = Self.defaultZones
         }
+
+        // Track recording settings (with defaults)
+        self.autoSaveICloud = d.object(forKey: "track.autoSaveICloud") != nil
+            ? d.bool(forKey: "track.autoSaveICloud") : false
+        self.tempIntervalMinutes = d.object(forKey: "track.tempIntervalMinutes") != nil
+            ? d.integer(forKey: "track.tempIntervalMinutes") : 5
+        self.tempElevationThreshold = d.object(forKey: "track.tempElevationThreshold") != nil
+            ? d.integer(forKey: "track.tempElevationThreshold") : 100
     }
 
     private func save() {
@@ -119,5 +160,9 @@ class UserProfile {
         if let data = try? JSONEncoder().encode(zones) {
             d.set(data, forKey: "profile.zones")
         }
+
+        d.set(autoSaveICloud, forKey: "track.autoSaveICloud")
+        d.set(tempIntervalMinutes, forKey: "track.tempIntervalMinutes")
+        d.set(tempElevationThreshold, forKey: "track.tempElevationThreshold")
     }
 }

@@ -4,6 +4,8 @@ import json
 import math
 import os
 import sqlite3
+import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -174,37 +176,119 @@ MAP_HTML = """
 <script src="https://unpkg.com/leaflet@1.9/dist/leaflet.js"></script>
 <style>
   html, body, #map { margin: 0; padding: 0; width: 100%; height: 100%; }
+  .corner-handle {
+    width: 14px; height: 14px;
+    background: #F44336; border: 2px solid white;
+    border-radius: 50%; cursor: move;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  }
+  .layer-control {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: white; border-radius: 6px; padding: 6px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3); font: 12px sans-serif;
+  }
+  .layer-control label { display: block; padding: 3px 4px; cursor: pointer; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div class="layer-control" id="layerCtrl">
+  <label><input type="radio" name="base" value="ign" checked> IGN Topo</label>
+  <label><input type="radio" name="base" value="osm"> OpenStreetMap</label>
+  <label><input type="radio" name="base" value="sat"> Satélite</label>
+</div>
 <script>
 var map = L.map('map').setView([40.38, -3.32], 10);
 
-L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '© OpenStreetMap, © CARTO',
-    subdomains: 'abcd',
-    maxZoom: 19
-}).addTo(map);
+// Base layers
+var layers = {
+  ign: L.tileLayer('https://www.ign.es/wmts/mapa-raster?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=MTN&STYLE=default&TILEMATRIXSET=GoogleMapsCompatible&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg', {
+    attribution: '© IGN España', maxZoom: 20
+  }),
+  osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 19
+  }),
+  sat: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: '© Esri', maxZoom: 18
+  })
+};
+var activeBase = layers.ign;
+activeBase.addTo(map);
 
+// Layer switcher
+document.querySelectorAll('#layerCtrl input[name="base"]').forEach(function(radio) {
+  radio.addEventListener('change', function() {
+    map.removeLayer(activeBase);
+    activeBase = layers[this.value];
+    activeBase.addTo(map);
+  });
+});
+
+// Download rectangle with draggable corners
 var rect = null;
-var center = null;
+var cornerNW = null, cornerSE = null;
 var radiusKm = 5;
+var rectBounds = null;
 
 function updateRect(lat, lon, km) {
-    center = [lat, lon];
     radiusKm = km;
     var dlat = km / 111.0;
     var dlon = km / (111.0 * Math.cos(lat * Math.PI / 180));
-    var bounds = [[lat - dlat, lon - dlon], [lat + dlat, lon + dlon]];
+    setBounds(lat - dlat, lon - dlon, lat + dlat, lon + dlon);
+}
+
+function setBounds(south, west, north, east) {
+    rectBounds = {south: south, west: west, north: north, east: east};
+    var bounds = [[south, west], [north, east]];
 
     if (rect) {
         rect.setBounds(bounds);
     } else {
         rect = L.rectangle(bounds, {
-            color: '#F44336', weight: 2, fillOpacity: 0.15
+            color: '#F44336', weight: 2, fillOpacity: 0.12,
+            dashArray: '6,4'
         }).addTo(map);
     }
+
+    // Corner handles
+    var nw = [north, west];
+    var se = [south, east];
+
+    var handleIcon = L.divIcon({className: 'corner-handle', iconSize: [14,14], iconAnchor: [7,7]});
+
+    if (cornerNW) {
+        cornerNW.setLatLng(nw);
+        cornerSE.setLatLng(se);
+    } else {
+        cornerNW = L.marker(nw, {icon: handleIcon, draggable: true}).addTo(map);
+        cornerSE = L.marker(se, {icon: handleIcon, draggable: true}).addTo(map);
+
+        cornerNW.on('drag', function(e) {
+            var p = e.latlng;
+            rectBounds.north = p.lat;
+            rectBounds.west = p.lng;
+            rect.setBounds([[rectBounds.south, rectBounds.west], [rectBounds.north, rectBounds.east]]);
+            notifyBoundsChanged();
+        });
+        cornerSE.on('drag', function(e) {
+            var p = e.latlng;
+            rectBounds.south = p.lat;
+            rectBounds.east = p.lng;
+            rect.setBounds([[rectBounds.south, rectBounds.west], [rectBounds.north, rectBounds.east]]);
+            notifyBoundsChanged();
+        });
+    }
+    notifyBoundsChanged();
+}
+
+function notifyBoundsChanged() {
+    if (!rectBounds) return;
+    var b = rectBounds;
+    var lat = (b.south + b.north) / 2;
+    var lon = (b.west + b.east) / 2;
+    document.title = "BOUNDS:" + b.south.toFixed(6) + "," + b.west.toFixed(6) + ","
+                   + b.north.toFixed(6) + "," + b.east.toFixed(6)
+                   + "|" + lat.toFixed(6) + "," + lon.toFixed(6);
 }
 
 function flyTo(lat, lon, zoom) {
@@ -214,28 +298,21 @@ function flyTo(lat, lon, zoom) {
 
 function setRadius(km) {
     radiusKm = km;
-    if (center) {
-        updateRect(center[0], center[1], km);
+    if (rectBounds) {
+        var lat = (rectBounds.south + rectBounds.north) / 2;
+        var lon = (rectBounds.west + rectBounds.east) / 2;
+        updateRect(lat, lon, km);
     }
 }
 
 function getBounds() {
-    if (!center) return null;
-    var lat = center[0], lon = center[1];
-    var dlat = radiusKm / 111.0;
-    var dlon = radiusKm / (111.0 * Math.cos(lat * Math.PI / 180));
-    return JSON.stringify({
-        south: lat - dlat, north: lat + dlat,
-        west: lon - dlon, east: lon + dlon,
-        lat: lat, lon: lon, radius: radiusKm
-    });
+    if (!rectBounds) return null;
+    return JSON.stringify(rectBounds);
 }
 
 // Click to set center
 map.on('click', function(e) {
     updateRect(e.latlng.lat, e.latlng.lng, radiusKm);
-    // Notify Python
-    document.title = "CLICK:" + e.latlng.lat.toFixed(6) + "," + e.latlng.lng.toFixed(6);
 });
 </script>
 </body>
@@ -373,6 +450,7 @@ class GeologyManagerWidget(QWidget):
         self.worker = None
         self.selected_lat = 40.38
         self.selected_lon = -3.32
+        self.custom_bounds = None  # Set when user drags corners
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -483,6 +561,11 @@ class GeologyManagerWidget(QWidget):
         self.refresh_lib_btn.clicked.connect(self.load_maps_library)
         lib_btn_layout.addWidget(self.refresh_lib_btn)
 
+        self.legend_btn = QPushButton("Legend")
+        self.legend_btn.setStyleSheet("font-size: 12px; padding: 6px 12px;")
+        self.legend_btn.clicked.connect(self.on_view_legend)
+        lib_btn_layout.addWidget(self.legend_btn)
+
         self.delete_map_btn = QPushButton("Delete")
         self.delete_map_btn.setStyleSheet("color: #F44336;")
         self.delete_map_btn.clicked.connect(self.on_delete_map)
@@ -559,12 +642,26 @@ class GeologyManagerWidget(QWidget):
     # -- Map interaction --
 
     def on_map_title_changed(self, title):
-        """Receive click events from the map via title change hack."""
-        if title.startswith("CLICK:"):
+        """Receive events from the map via title change hack."""
+        if title.startswith("BOUNDS:"):
+            # Format: BOUNDS:south,west,north,east|center_lat,center_lon
+            parts = title[7:].split("|")
+            bounds = parts[0].split(",")
+            center = parts[1].split(",")
+            self.selected_lat = float(center[0])
+            self.selected_lon = float(center[1])
+            self.custom_bounds = {
+                "south": float(bounds[0]), "west": float(bounds[1]),
+                "north": float(bounds[2]), "east": float(bounds[3]),
+            }
+            self.update_coverage(self.selected_lat, self.selected_lon)
+            self.update_estimate()
+        elif title.startswith("CLICK:"):
             parts = title[6:].split(",")
             lat, lon = float(parts[0]), float(parts[1])
             self.selected_lat = lat
             self.selected_lon = lon
+            self.custom_bounds = None
             self.update_coverage(lat, lon)
             self.update_estimate()
 
@@ -602,12 +699,23 @@ class GeologyManagerWidget(QWidget):
         if not key or key not in SOURCES:
             return
         src = SOURCES[key]
-        radius = self.radius_spin.value()
-        lat = self.selected_lat
-        dlat = radius / 111.0
-        dlon = radius / (111.0 * math.cos(math.radians(lat)))
-        total = count_tiles(lat - dlat, self.selected_lon - dlon,
-                            lat + dlat, self.selected_lon + dlon,
+
+        if self.custom_bounds:
+            min_lat = self.custom_bounds["south"]
+            min_lon = self.custom_bounds["west"]
+            max_lat = self.custom_bounds["north"]
+            max_lon = self.custom_bounds["east"]
+        else:
+            radius = self.radius_spin.value()
+            lat = self.selected_lat
+            dlat = radius / 111.0
+            dlon = radius / (111.0 * math.cos(math.radians(lat)))
+            min_lat = lat - dlat
+            min_lon = self.selected_lon - dlon
+            max_lat = lat + dlat
+            max_lon = self.selected_lon + dlon
+
+        total = count_tiles(min_lat, min_lon, max_lat, max_lon,
                             src.min_zoom, src.max_zoom)
         est_mb = total * 15 / 1024
         self.estimate_label.setText(f"~{total} tiles (~{est_mb:.0f} MB)")
@@ -622,19 +730,30 @@ class GeologyManagerWidget(QWidget):
         src = SOURCES[key]
         lat, lon = self.selected_lat, self.selected_lon
         radius = self.radius_spin.value()
-        dlat = radius / 111.0
-        dlon = radius / (111.0 * math.cos(math.radians(lat)))
+
+        # Use custom bounds if user dragged corners, otherwise radius
+        if self.custom_bounds:
+            min_lat = self.custom_bounds["south"]
+            min_lon = self.custom_bounds["west"]
+            max_lat = self.custom_bounds["north"]
+            max_lon = self.custom_bounds["east"]
+        else:
+            dlat = radius / 111.0
+            dlon = radius / (111.0 * math.cos(math.radians(lat)))
+            min_lat = lat - dlat
+            min_lon = lon - dlon
+            max_lat = lat + dlat
+            max_lon = lon + dlon
 
         LOCAL_MAPS_DIR.mkdir(parents=True, exist_ok=True)
         filename = f"{src.id}_{lat:.2f}_{lon:.2f}_r{radius}km.mbtiles"
         output = str(LOCAL_MAPS_DIR / filename)
 
-        total_est = count_tiles(lat - dlat, self.selected_lon - dlon,
-                                lat + dlat, self.selected_lon + dlon,
+        total_est = count_tiles(min_lat, min_lon, max_lat, max_lon,
                                 src.min_zoom, src.max_zoom)
         self.log.clear()
         self.log.append(f"Source: {src.name} ({src.country})")
-        self.log.append(f"Center: {lat:.4f}, {lon:.4f} | Radius: {radius} km")
+        self.log.append(f"Bounds: {min_lat:.4f},{min_lon:.4f} → {max_lat:.4f},{max_lon:.4f}")
         self.log.append(f"Output: {filename}")
         self.log.append(f"Tiles: ~{total_est}")
         self.log.append("")
@@ -646,8 +765,8 @@ class GeologyManagerWidget(QWidget):
         self.download_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
 
-        self.worker = DownloadProcess(src, lat - dlat, self.selected_lon - dlon,
-                                      lat + dlat, self.selected_lon + dlon, output)
+        self.worker = DownloadProcess(src, min_lat, min_lon,
+                                      max_lat, max_lon, output)
         self.worker.start(self.on_progress, self.on_finished, timer_parent=self)
 
     def on_cancel(self):
@@ -735,6 +854,163 @@ class GeologyManagerWidget(QWidget):
             self.load_maps_library()
         except Exception as e:
             QMessageBox.warning(self, "Error", f"Transfer failed: {e}")
+
+    # -- Legend --
+
+    def on_view_legend(self):
+        """Download and crop the official IGME legend JPG for the selected map."""
+        idx = self.maps_list.currentIndex()
+        if idx < 0:
+            return
+
+        mbtiles_path = Path(self.maps_list.currentData())
+        stem = mbtiles_path.stem
+
+        # Only supported for Spain (IGME)
+        if not stem.startswith("spain_igme"):
+            QMessageBox.information(self, "Legend",
+                "Official legend download is currently only supported for IGME (Spain) maps.")
+            return
+
+        # Find the sheet number from the MBTiles bbox
+        bbox = self._get_bbox_from_mbtiles(mbtiles_path)
+        if not bbox:
+            QMessageBox.information(self, "Legend",
+                "Could not determine map bounds from MBTiles metadata.")
+            return
+
+        # Check if we already have the JPG
+        legend_dir = mbtiles_path.parent / "legends"
+        existing = list(legend_dir.glob(f"MAGNA50_*_{stem}.jpg")) if legend_dir.exists() else []
+        if existing:
+            self._open_cropper(existing[0])
+            return
+
+        # Identify the sheet number via the IGME API
+        self.log.append(f"\nIdentifying IGME sheet for {stem}...")
+        self.legend_btn.setEnabled(False)
+        self.legend_btn.setText("...")
+
+        min_lat, min_lon, max_lat, max_lon = bbox
+        center_lat = (min_lat + max_lat) / 2
+        center_lon = (min_lon + max_lon) / 2
+
+        # Run identify + download in subprocess (map JPG + memoria PDF)
+        legend_dir.mkdir(parents=True, exist_ok=True)
+        script = (
+            f"import json, urllib.request, sys\n"
+            f"lat, lon = {center_lat}, {center_lon}\n"
+            f"url = ('https://mapas.igme.es/gis/rest/services/Cartografia_Geologica/IGME_MAGNA_50/MapServer/identify'"
+            f"  f'?geometry={{lon}},{{lat}}&geometryType=esriGeometryPoint&sr=4326'"
+            f"  f'&layers=all:11&tolerance=1&mapExtent={{lon-0.2}},{{lat-0.2}},{{lon+0.2}},{{lat+0.2}}'"
+            f"  f'&imageDisplay=256,256,96&returnGeometry=false&f=json')\n"
+            f"req = urllib.request.Request(url, headers={{'User-Agent': 'MapsPersonal/1.0'}})\n"
+            f"data = json.loads(urllib.request.urlopen(req, timeout=10).read())\n"
+            f"hoja = data['results'][0]['attributes'].get('HOJA') or data['results'][0]['attributes'].get('nº de hoja')\n"
+            f"print(f'Sheet: {{hoja}}')\n"
+            f"\n"
+            f"# Download map JPG\n"
+            f"jpg_url = f'https://info.igme.es/cartografiadigital/datos/magna50/jpgs/d5_G50/Editado_MAGNA50_{{hoja}}.jpg'\n"
+            f"print(f'Downloading map: {{jpg_url}}')\n"
+            f"jpg_out = {str(legend_dir)!r} + f'/MAGNA50_{{hoja}}_{stem}.jpg'\n"
+            f"urllib.request.urlretrieve(jpg_url, jpg_out)\n"
+            f"print(f'Map saved: {{jpg_out}}')\n"
+            f"\n"
+            f"# Download memoria PDF\n"
+            f"mem_url = f'https://info.igme.es/cartografiadigital/datos/magna50/memorias/MMagna0{{hoja}}.pdf'\n"
+            f"print(f'Downloading memoria: {{mem_url}}')\n"
+            f"mem_out = {str(legend_dir)!r} + f'/Memoria_{{hoja}}_{stem}.pdf'\n"
+            f"try:\n"
+            f"    urllib.request.urlretrieve(mem_url, mem_out)\n"
+            f"    print(f'Memoria saved: {{mem_out}}')\n"
+            f"except Exception as e:\n"
+            f"    print(f'Memoria not available: {{e}}')\n"
+        )
+
+        self._legend_proc = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
+        self._legend_dir = legend_dir
+        self._legend_stem = stem
+        self._legend_timer = QTimer(self)
+        self._legend_timer.timeout.connect(self._poll_legend)
+        self._legend_timer.start(500)
+
+    def _poll_legend(self):
+        """Poll legend download for completion."""
+        proc = self._legend_proc
+        if proc is None:
+            self._legend_timer.stop()
+            return
+
+        retcode = proc.poll()
+        if retcode is not None:
+            remaining = proc.stdout.read()
+            if remaining:
+                for line in remaining.strip().split("\n"):
+                    if line.strip():
+                        self.log.append(f"  {line.strip()}")
+
+            self._legend_timer.stop()
+            self._legend_proc = None
+            self.legend_btn.setEnabled(True)
+            self.legend_btn.setText("Legend")
+
+            if retcode == 0:
+                # Find downloaded files
+                jpgs = list(self._legend_dir.glob(f"MAGNA50_*_{self._legend_stem}.jpg"))
+                pdfs = list(self._legend_dir.glob(f"Memoria_*_{self._legend_stem}.pdf"))
+                if jpgs:
+                    self.log.append(f"Map downloaded: {jpgs[0].name}")
+                    if pdfs:
+                        self.log.append(f"Memoria downloaded: {pdfs[0].name}")
+                    self._open_cropper(jpgs[0])
+                else:
+                    self.log.append("Download completed but JPG not found.")
+            else:
+                self.log.append("Download failed. Sheet may not be available.")
+        else:
+            while True:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line:
+                    self.log.append(f"  {line}")
+
+    def _open_cropper(self, image_path: Path):
+        """Open the image cropper dialog."""
+        from image_cropper import ImageCropperDialog
+        dialog = ImageCropperDialog(image_path, self)
+        dialog.exec()
+
+    def _open_file(self, path: Path):
+        """Open a file with the system default viewer."""
+        if platform.system() == "Darwin":
+            subprocess.Popen(["open", str(path)])
+        elif platform.system() == "Windows":
+            os.startfile(str(path))
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+
+    def _get_bbox_from_mbtiles(self, path: Path) -> tuple | None:
+        """Read bounds from MBTiles metadata."""
+        try:
+            conn = sqlite3.connect(str(path))
+            cursor = conn.execute(
+                "SELECT value FROM metadata WHERE name = 'bounds'"
+            )
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                parts = row[0].split(",")
+                if len(parts) == 4:
+                    min_lon, min_lat, max_lon, max_lat = map(float, parts)
+                    return (min_lat, min_lon, max_lat, max_lon)
+        except Exception:
+            pass
+        return None
 
     def on_delete_map(self):
         idx = self.maps_list.currentIndex()

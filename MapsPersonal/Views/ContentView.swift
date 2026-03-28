@@ -9,6 +9,7 @@ struct ContentView: View {
     @State private var trackRecorder: TrackRecorder?
     @State private var offlineMaps = OfflineMapsManager()
     @State private var weather = WeatherService()
+    @State private var userProfile = UserProfile()
     @State private var showLayerPicker = false
     @State private var showOfflineMaps = false
     @State private var showStats = false
@@ -27,6 +28,8 @@ struct ContentView: View {
     @State private var searchText = ""
     @State private var searchResults: [GeocodingResult] = []
     @State private var isSearching = false
+    @State private var showRecoveryAlert = false
+    @State private var recoveredTrack: GPXTrack?
 
     var body: some View {
         ZStack {
@@ -44,6 +47,7 @@ struct ContentView: View {
                     }
                 },
                 terrainVersion: mapState.terrainVersion,
+                trackVersion: trackRecorder?.trackVersion ?? 0,
                 petPositionTimestamp: tractive.lastPositionUpdate
             )
             .ignoresSafeArea()
@@ -204,13 +208,20 @@ struct ContentView: View {
                     if tractive.isConnected {
                         Menu {
                             ForEach(tractive.pets) { pet in
-                                Button {
-                                    tractive.togglePet(pet.id)
-                                } label: {
-                                    Label(
-                                        "\(pet.emoji) \(pet.name)\(pet.batteryLevel.map { " \($0)%" } ?? "")",
-                                        systemImage: pet.isVisible ? "checkmark.circle.fill" : "circle"
-                                    )
+                                Section(pet.emoji + " " + pet.name + (pet.batteryLevel.map { " \($0)%" } ?? "")) {
+                                    Button {
+                                        tractive.togglePet(pet.id)
+                                    } label: {
+                                        Label("Mostrar en mapa", systemImage: pet.isVisible ? "checkmark.circle.fill" : "circle")
+                                    }
+                                    Button {
+                                        Task { await tractive.toggleLiveTracking(pet.id) }
+                                    } label: {
+                                        Label(
+                                            pet.isLive ? "LIVE activado" : "Activar LIVE",
+                                            systemImage: pet.isLive ? "antenna.radiowaves.left.and.right.circle.fill" : "antenna.radiowaves.left.and.right"
+                                        )
+                                    }
                                 }
                             }
                         } label: {
@@ -218,9 +229,11 @@ struct ContentView: View {
                                 .font(.body)
                                 .padding(7)
                                 .background(
-                                    tractive.visiblePets.isEmpty
-                                        ? AnyShapeStyle(.ultraThinMaterial)
-                                        : AnyShapeStyle(.orange.opacity(0.3)),
+                                    tractive.pets.contains(where: { $0.isLive })
+                                        ? AnyShapeStyle(.green.opacity(0.4))
+                                        : tractive.visiblePets.isEmpty
+                                            ? AnyShapeStyle(.ultraThinMaterial)
+                                            : AnyShapeStyle(.orange.opacity(0.3)),
                                     in: Circle()
                                 )
                         }
@@ -328,6 +341,8 @@ struct ContentView: View {
         }
         .onAppear {
             trackRecorder = TrackRecorder(locationService: locationService)
+            trackRecorder?.setWeatherService(weather)
+            trackRecorder?.setUserProfile(userProfile)
             locationService.requestAuthorization()
             offlineMaps.scan()
             autoActivateMaps()
@@ -346,6 +361,12 @@ struct ContentView: View {
                     tractive.startAutoRefresh()
                 }
             }
+
+            // Check for unsaved track recovery
+            if let track = TrackRecorder.loadRecoveryTrack() {
+                recoveredTrack = track
+                showRecoveryAlert = true
+            }
         }
         .sheet(isPresented: $showLayerPicker) {
             LayerPickerView(mapState: mapState)
@@ -354,6 +375,7 @@ struct ContentView: View {
         .sheet(isPresented: $showOfflineMaps) {
             OfflineMapsView(
                 manager: offlineMaps,
+                mapState: mapState,
                 onActivate: { mapId, url in
                     mapState.dynamicOfflineLayers[mapId] = url
                     mapState.activeDynamicOverlays.insert(mapId)
@@ -378,7 +400,7 @@ struct ContentView: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showSettings) {
-            SettingsView()
+            SettingsView(tractive: tractive, mapState: mapState)
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showChecklists) {
@@ -388,6 +410,25 @@ struct ContentView: View {
         .sheet(isPresented: $showHelp) {
             HelpView()
                 .presentationDetents([.large])
+        }
+        .alert("Track sin guardar", isPresented: $showRecoveryAlert) {
+            Button("Guardar") {
+                if let track = recoveredTrack, let recorder = trackRecorder {
+                    recorder.currentTrack = track
+                    if let saved = recorder.saveTrack() {
+                        mapState.savedTracks.append(saved)
+                    }
+                }
+                recoveredTrack = nil
+            }
+            Button("Descartar", role: .destructive) {
+                TrackRecorder.deleteRecoveryFile()
+                recoveredTrack = nil
+            }
+        } message: {
+            if let track = recoveredTrack {
+                Text("Se encontró un track con \(track.points.count) puntos del \(track.startDate.formatted(date: .abbreviated, time: .shortened)). ¿Guardar?")
+            }
         }
     }
 
@@ -415,14 +456,6 @@ struct ContentView: View {
 
             if let url = offlineMaps.activate(map.id) {
                 mapState.dynamicOfflineLayers[map.id] = url
-
-                // Bridge: also populate offlineTileURLs for static layers
-                let name = map.name.lowercased()
-                if name.contains("geologico") || name.contains("magna") {
-                    mapState.offlineTileURLs[.igmeGeologicalOffline] = url
-                } else if name.contains("ign") || name.contains("mtn") {
-                    mapState.offlineTileURLs[.ignMTNOffline] = url
-                }
             }
         }
     }

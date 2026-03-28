@@ -10,14 +10,17 @@ struct TrackPoint: Codable, Identifiable {
     let elevation: Double?
     let timestamp: Date
     var heartRate: Int?
+    /// Temperature in °C from Open-Meteo weather model (forecast, not measured)
+    var temperature: Double?
 
-    init(location: CLLocation, heartRate: Int? = nil) {
+    init(location: CLLocation, heartRate: Int? = nil, temperature: Double? = nil) {
         self.id = UUID()
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
         self.elevation = location.altitude > -999 ? location.altitude : nil
         self.timestamp = location.timestamp
         self.heartRate = heartRate
+        self.temperature = temperature
     }
 
     var coordinate: CLLocationCoordinate2D {

@@ -12,12 +12,9 @@ class MapState {
     var activeOverlays: Set<MapLayer> = [] {
         didSet { save() }
     }
-    var overlayOpacity: [MapLayer: Double] = [.igmeGeological: 0.6, .igmeGeologicalOffline: 0.6] {
+    var overlayOpacity: [MapLayer: Double] = [.igmeGeological: 0.6] {
         didSet { save() }
     }
-
-    // URLs for offline tile servers (set at runtime, not persisted)
-    var offlineTileURLs: [MapLayer: String] = [:]
 
     // Dynamic offline layers from OfflineMapsManager (mapId -> urlTemplate)
     var dynamicOfflineLayers: [String: String] = [:]
@@ -25,7 +22,7 @@ class MapState {
         didSet { save() }
     }
     var dynamicOverlayOpacity: [String: Double] = [:] {
-        didSet { save() }
+        didSet { save(); terrainVersion += 1 }
     }
 
     // Terrain overlays
@@ -102,7 +99,7 @@ class MapState {
         isSaving = true
         activeBaseLayer = .ignMTN
         activeOverlays = []
-        overlayOpacity = [.igmeGeological: 0.6, .igmeGeologicalOffline: 0.6]
+        overlayOpacity = [.igmeGeological: 0.6]
         activeDynamicOverlays = []
         dynamicOverlayOpacity = [:]
         centerCoordinate = CLLocationCoordinate2D(latitude: 40.4168, longitude: -3.7038)

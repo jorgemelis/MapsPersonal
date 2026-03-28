@@ -4,6 +4,7 @@ import SwiftUI
 
 struct OfflineMapsView: View {
     let manager: OfflineMapsManager
+    @Bindable var mapState: MapState
     let onActivate: (String, String) -> Void // (mapId, urlTemplate)
     let onDeactivate: (String) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -20,31 +21,48 @@ struct OfflineMapsView: View {
                 } else {
                     Section("Mapas disponibles") {
                         ForEach(manager.availableMaps) { map in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(map.name)
-                                        .font(.body)
-                                    Text(formatSize(map.fileSize))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                            VStack {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(map.name)
+                                            .font(.body)
+                                        Text(formatSize(map.fileSize))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Toggle("", isOn: Binding(
+                                        get: { map.isActive },
+                                        set: { active in
+                                            if active {
+                                                if let url = manager.activate(map.id) {
+                                                    onActivate(map.id, url)
+                                                }
+                                            } else {
+                                                manager.deactivate(map.id)
+                                                onDeactivate(map.id)
+                                            }
+                                        }
+                                    ))
+                                    .labelsHidden()
                                 }
 
-                                Spacer()
-
-                                Toggle("", isOn: Binding(
-                                    get: { map.isActive },
-                                    set: { active in
-                                        if active {
-                                            if let url = manager.activate(map.id) {
-                                                onActivate(map.id, url)
-                                            }
-                                        } else {
-                                            manager.deactivate(map.id)
-                                            onDeactivate(map.id)
-                                        }
+                                if map.isActive {
+                                    HStack {
+                                        Text("Opacidad")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                        Slider(
+                                            value: Binding(
+                                                get: { mapState.dynamicOverlayOpacity[map.id] ?? 0.7 },
+                                                set: { mapState.dynamicOverlayOpacity[map.id] = $0 }
+                                            ),
+                                            in: 0.1...1.0
+                                        )
                                     }
-                                ))
-                                .labelsHidden()
+                                }
                             }
                         }
                     }

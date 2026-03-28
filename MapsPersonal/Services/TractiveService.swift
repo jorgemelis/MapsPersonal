@@ -23,6 +23,7 @@ struct TractivePet: Identifiable {
     var batteryLevel: Int?
     var isCharging: Bool = false
     var isVisible: Bool = true
+    var isLive: Bool = false  // individual LIVE tracking state
 }
 
 struct TractivePosition {
@@ -98,6 +99,8 @@ class TractiveService {
         channelTask?.cancel()
         refreshTask?.cancel()
         liveRefreshTask?.cancel()
+        perPetLiveTask?.cancel()
+        perPetLiveTask = nil
         token = nil
         pets.removeAll()
         isConnected = false
@@ -151,6 +154,9 @@ class TractiveService {
 
             // Start listening to the event channel
             startChannel()
+
+            // Wake trackers to get a fresh position (like the official app does)
+            await requestFreshPositions()
         } catch {
             lastError = error.localizedDescription
             isConnected = false
@@ -324,6 +330,88 @@ class TractiveService {
         // Log other event types for debugging
         if let msgType {
             print("🐾 Channel event: \(msgType)")
+        }
+    }
+
+    // MARK: - Per-Pet LIVE Tracking
+
+    /// Toggle LIVE tracking for an individual pet
+    func toggleLiveTracking(_ petId: String) async {
+        guard let token else { return }
+        guard let idx = pets.firstIndex(where: { $0.id == petId }) else { return }
+
+        let pet = pets[idx]
+        let newState = !pet.isLive
+
+        do {
+            try await refreshTokenIfNeeded()
+            let command = newState ? "on" : "off"
+            _ = try await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/\(command)", token: token, method: "POST")
+            pets[idx].isLive = newState
+            print("🐾 LIVE \(command.uppercased()) for \(pet.name)")
+
+            if newState {
+                // Start keep-alive for this pet if no global hike mode
+                startPerPetLiveKeepAlive()
+            } else {
+                // Stop keep-alive if no pets are live
+                if !pets.contains(where: { $0.isLive }) {
+                    perPetLiveTask?.cancel()
+                    perPetLiveTask = nil
+                }
+            }
+        } catch {
+            print("🐾 LIVE toggle failed for \(pet.name): \(error)")
+        }
+
+        lastPositionUpdate = Date()
+    }
+
+    private var perPetLiveTask: Task<Void, Never>?
+
+    /// Keep-alive for individually activated LIVE pets
+    private func startPerPetLiveKeepAlive() {
+        guard perPetLiveTask == nil else { return }
+        perPetLiveTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(120))
+                guard let token = self.token else { continue }
+                for pet in pets where pet.isLive {
+                    _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/on", token: token, method: "POST")
+                }
+            }
+        }
+    }
+
+    // MARK: - Wake Tracker (request fresh position)
+
+    /// Send live_tracking/on to wake trackers, wait for fresh position, then turn off.
+    /// This mimics what the official Tractive app does on launch.
+    func requestFreshPositions() async {
+        guard let token else { return }
+
+        for pet in pets {
+            do {
+                try await refreshTokenIfNeeded()
+                print("🐾 Waking tracker for \(pet.name)...")
+                _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/on", token: token, method: "POST")
+            } catch {
+                print("🐾 Wake failed for \(pet.name): \(error)")
+            }
+        }
+
+        // Wait for tracker to wake and send a position update via channel
+        try? await Task.sleep(for: .seconds(15))
+
+        // Fetch fresh positions explicitly in case channel didn't deliver
+        await refreshPositions()
+
+        // Turn off LIVE tracking to save tracker battery (unless hike mode is active)
+        if !isLiveTracking {
+            for pet in pets {
+                _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/off", token: token, method: "POST")
+            }
+            print("🐾 Trackers back to normal mode")
         }
     }
 
