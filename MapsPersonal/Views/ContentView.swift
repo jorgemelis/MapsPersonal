@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var showTrackManager = false
     @State private var showSettings = false
     @State private var showChecklists = false
+    @State private var showLegends = false
     @State private var showHelp = false
     @State private var shareFileURL: URL?
     @State private var coordinateText = ""
@@ -310,6 +311,11 @@ struct ContentView: View {
                         } label: {
                             Label("Checklists", systemImage: "checklist")
                         }
+                        Button {
+                            showLegends = true
+                        } label: {
+                            Label("Leyendas", systemImage: "doc.richtext")
+                        }
                         Divider()
                         Button {
                             showSettings = true
@@ -405,6 +411,10 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showChecklists) {
             ChecklistListView()
+                .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $showLegends) {
+            LegendView()
                 .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showHelp) {

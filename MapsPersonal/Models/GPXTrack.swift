@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import UIKit
 
 // MARK: - Track Point
 
@@ -145,6 +146,7 @@ struct GPXTrack: Identifiable, Codable {
     private static func defaultName(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd_HHmm"
-        return "MP\(formatter.string(from: date))"
+        let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        return "MP\(formatter.string(from: date))_\(device)"
     }
 }
