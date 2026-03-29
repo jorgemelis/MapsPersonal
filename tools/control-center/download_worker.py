@@ -49,7 +49,11 @@ def fetch_arcgis(session, url, layers, x, y, z):
 def fetch_wms(session, url, layers, wms_version, srs, x, y, z):
     bbox = tile_to_bbox_3857(x, y, z)
     if wms_version == "1.3.0":
-        bbox_str = f"{bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]}"
+        # WMS 1.3.0 swaps axis order only for geographic CRS (EPSG:4326)
+        if srs == "EPSG:4326":
+            bbox_str = f"{bbox[1]},{bbox[0]},{bbox[3]},{bbox[2]}"
+        else:
+            bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
         crs = "CRS"
     else:
         bbox_str = f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"

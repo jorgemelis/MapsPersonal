@@ -101,6 +101,15 @@ SOURCES = {
         source_type="wms", format="png", max_zoom=15, min_zoom=8,
         layers="SGM_EN:General_geology",
     ),
+    "bc": GeoSource(
+        id="bc_bcgs", name="BC Digital Geology",
+        country="Canada (British Columbia)", scale="1:50,000–1:250,000",
+        attribution="British Columbia Geological Survey",
+        tile_url="https://openmaps.gov.bc.ca/geo/pub/WHSE_MINERAL_TENURE.GEOL_BEDROCK_UNIT_POLY_SVW/ows",
+        source_type="wms", format="png", max_zoom=15, min_zoom=8,
+        layers="pub:WHSE_MINERAL_TENURE.GEOL_BEDROCK_UNIT_POLY_SVW",
+        wms_version="1.3.0", srs="EPSG:3857",
+    ),
 }
 
 COUNTRY_BOUNDS = {
@@ -109,6 +118,7 @@ COUNTRY_BOUNDS = {
     "belgium": (49.5, 2.5, 51.5, 6.4),
     "ontario": (41.7, -95.2, 56.9, -74.3),
     "quebec":  (45.0, -79.8, 62.6, -57.1),
+    "bc":      (48.3, -139.1, 60.0, -114.0),
     "canada":  (41.7, -141.0, 83.1, -52.6),
 }
 
