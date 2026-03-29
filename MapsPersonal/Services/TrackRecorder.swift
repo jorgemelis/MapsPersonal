@@ -170,12 +170,18 @@ class TrackRecorder {
     /// Copy a GPX file to iCloud for access from Mac/iPad
     static func copyToICloud(_ url: URL) -> Bool {
         guard let container = FileManager.default.url(forUbiquityContainerIdentifier: "iCloud.com.jorge.mapspersonal2026") else {
+            print("TrackRecorder: iCloud container NOT available (user not signed in or iCloud Drive disabled)")
             return false
         }
         let tracksDir = container.appendingPathComponent("Documents/Tracks")
         let fm = FileManager.default
         if !fm.fileExists(atPath: tracksDir.path) {
-            try? fm.createDirectory(at: tracksDir, withIntermediateDirectories: true)
+            do {
+                try fm.createDirectory(at: tracksDir, withIntermediateDirectories: true)
+            } catch {
+                print("TrackRecorder: failed to create iCloud Tracks dir: \(error)")
+                return false
+            }
         }
         let dest = tracksDir.appendingPathComponent(url.lastPathComponent)
         if fm.fileExists(atPath: dest.path) {
@@ -185,6 +191,7 @@ class TrackRecorder {
             try fm.copyItem(at: url, to: dest)
             return true
         } catch {
+            print("TrackRecorder: iCloud copy failed: \(error)")
             return false
         }
     }

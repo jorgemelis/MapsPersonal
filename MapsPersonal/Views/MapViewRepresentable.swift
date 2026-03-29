@@ -120,6 +120,9 @@ struct MapViewRepresentable: UIViewRepresentable {
 
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
             syncLayers(style: style, state: parent.mapState)
+            // Sync track overlay once style is ready (fixes polyline not appearing
+            // when recording starts before style finishes loading)
+            syncTrackOverlay(mapView: mapView, recorder: parent.trackRecorder)
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {

@@ -145,7 +145,7 @@ struct GPXTrack: Identifiable, Codable {
 
     private static func defaultName(for date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd_HHmm"
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
         let device = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
         return "MP\(formatter.string(from: date))_\(device)"
     }

@@ -111,8 +111,8 @@ class TractiveService {
     /// Connect: authenticate + discover all pets + fetch positions + start channel
     func connect() async {
         guard let creds = Self.credentials else {
-            lastError = "Tractive credentials not found in Secrets.plist"
-            print("🐾 Tractive: no credentials found")
+            lastError = "Tractive credentials not found (check Settings or Secrets.plist)"
+            print("🐾 Tractive: no credentials found in Keychain or Secrets.plist")
             return
         }
 

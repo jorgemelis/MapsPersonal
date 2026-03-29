@@ -168,9 +168,42 @@ struct SettingsView: View {
                     Button(tractiveStatus.isEmpty ? "Save & Connect" : tractiveStatus) {
                         TractiveCredentials.email = tractiveEmail
                         TractiveCredentials.password = tractivePassword
-                        tractiveStatus = "Saved"
+                        tractiveStatus = "Connecting..."
+                        Task {
+                            await tractive.connect()
+                            tractiveStatus = tractive.isConnected
+                                ? "Connected (\(tractive.pets.count) pets)"
+                                : "Failed: \(tractive.lastError ?? "unknown")"
+                        }
                     }
                     .disabled(tractiveEmail.isEmpty || tractivePassword.isEmpty)
+
+                    if tractive.isConnected {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Connected — \(tractive.pets.count) pet(s)")
+                        }
+                    } else if let error = tractive.lastError {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .font(.caption)
+                        }
+                    }
+
+                    if !tractive.isConnected && TractiveCredentials.hasCredentials {
+                        Button("Retry Connection") {
+                            tractiveStatus = "Connecting..."
+                            Task {
+                                await tractive.connect()
+                                tractiveStatus = tractive.isConnected
+                                    ? "Connected (\(tractive.pets.count) pets)"
+                                    : "Failed"
+                            }
+                        }
+                    }
 
                     if TractiveCredentials.hasCredentials {
                         Button("Clear Credentials", role: .destructive) {
@@ -183,7 +216,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Tractive Pet Tracker")
                 } footer: {
-                    Text("Credentials are stored securely in the device Keychain. Restart the app after saving to connect.")
+                    Text("Credentials are stored securely in the device Keychain.")
                         .font(.caption2)
                 }
 
