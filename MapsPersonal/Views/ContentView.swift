@@ -11,7 +11,7 @@ struct ContentView: View {
     @State private var weather = WeatherService()
     @State private var userProfile = UserProfile()
     @State private var showLayerPicker = false
-    @State private var showOfflineMaps = false
+    // showOfflineMaps removed — offline maps now in LayerPickerView
     @State private var showStats = false
     @State private var showWeather = false
     @State private var showTrackManager = false
@@ -302,11 +302,6 @@ struct ContentView: View {
                             Label("Saved Tracks", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                         }
                         Button {
-                            showOfflineMaps = true
-                        } label: {
-                            Label("Offline Maps", systemImage: "arrow.down.circle")
-                        }
-                        Button {
                             showChecklists = true
                         } label: {
                             Label("Checklists", systemImage: "checklist")
@@ -375,13 +370,9 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showLayerPicker) {
-            LayerPickerView(mapState: mapState)
-                .presentationDetents([.medium])
-        }
-        .sheet(isPresented: $showOfflineMaps) {
-            OfflineMapsView(
-                manager: offlineMaps,
+            LayerPickerView(
                 mapState: mapState,
+                offlineMaps: offlineMaps,
                 onActivate: { mapId, url in
                     mapState.dynamicOfflineLayers[mapId] = url
                     mapState.activeDynamicOverlays.insert(mapId)
