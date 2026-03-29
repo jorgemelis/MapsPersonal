@@ -109,31 +109,91 @@ class UserProfile {
     init() {
         let d = UserDefaults.standard
 
-        self.age = d.object(forKey: "profile.age") != nil ? d.integer(forKey: "profile.age") : nil
-        self.weightKg = d.object(forKey: "profile.weightKg") != nil ? d.double(forKey: "profile.weightKg") : nil
-        self.heightM = d.object(forKey: "profile.heightM") != nil ? d.double(forKey: "profile.heightM") : nil
-        self.waistCm = d.object(forKey: "profile.waistCm") != nil ? d.double(forKey: "profile.waistCm") : nil
+        // Try loading from iCloud profile.json first (synced from Control Center)
+        var icloudProfile: [String: Any]?
+        if let container = FileManager.default.url(forUbiquityContainerIdentifier: "iCloud.com.jorge.mapspersonal2026") {
+            let profileURL = container.appendingPathComponent("Documents/profile.json")
+            if let data = try? Data(contentsOf: profileURL),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                icloudProfile = json
+                print("UserProfile: loaded from iCloud profile.json")
+            }
+        }
 
-        if d.object(forKey: "profile.maxHROverride") != nil {
+        // iCloud values override UserDefaults (if present)
+        let p = icloudProfile
+
+        if let age = p?["age"] as? Int {
+            self.age = age
+        } else {
+            self.age = d.object(forKey: "profile.age") != nil ? d.integer(forKey: "profile.age") : nil
+        }
+
+        if let w = p?["weightKg"] as? Double {
+            self.weightKg = w
+        } else {
+            self.weightKg = d.object(forKey: "profile.weightKg") != nil ? d.double(forKey: "profile.weightKg") : nil
+        }
+
+        if let h = p?["heightM"] as? Double {
+            self.heightM = h
+        } else {
+            self.heightM = d.object(forKey: "profile.heightM") != nil ? d.double(forKey: "profile.heightM") : nil
+        }
+
+        if let w = p?["waistCm"] as? Double {
+            self.waistCm = w
+        } else {
+            self.waistCm = d.object(forKey: "profile.waistCm") != nil ? d.double(forKey: "profile.waistCm") : nil
+        }
+
+        if let override = p?["maxHROverride"] as? Int {
+            self.maxHROverride = override
+        } else if d.object(forKey: "profile.maxHROverride") != nil {
             self.maxHROverride = d.integer(forKey: "profile.maxHROverride")
         } else {
             self.maxHROverride = nil
         }
 
-        if let data = d.data(forKey: "profile.zones"),
+        if let zonesArray = p?["zones"] as? [[String: Any]] {
+            let parsed = zonesArray.compactMap { dict -> HeartRateZone? in
+                guard let name = dict["name"] as? String,
+                      let minPct = dict["minPct"] as? Int,
+                      let maxPct = dict["maxPct"] as? Int else { return nil }
+                return HeartRateZone(name: name, minPct: minPct, maxPct: maxPct)
+            }
+            self.zones = parsed.isEmpty ? Self.defaultZones : parsed
+        } else if let data = d.data(forKey: "profile.zones"),
            let decoded = try? JSONDecoder().decode([HeartRateZone].self, from: data) {
             self.zones = decoded
         } else {
             self.zones = Self.defaultZones
         }
 
-        // Track recording settings (with defaults)
-        self.autoSaveICloud = d.object(forKey: "track.autoSaveICloud") != nil
-            ? d.bool(forKey: "track.autoSaveICloud") : false
-        self.tempIntervalMinutes = d.object(forKey: "track.tempIntervalMinutes") != nil
-            ? d.integer(forKey: "track.tempIntervalMinutes") : 5
-        self.tempElevationThreshold = d.object(forKey: "track.tempElevationThreshold") != nil
-            ? d.integer(forKey: "track.tempElevationThreshold") : 100
+        // Track recording settings
+        if let auto = p?["autoSaveICloud"] as? Bool {
+            self.autoSaveICloud = auto
+        } else {
+            self.autoSaveICloud = d.object(forKey: "track.autoSaveICloud") != nil
+                ? d.bool(forKey: "track.autoSaveICloud") : false
+        }
+
+        if let interval = p?["tempIntervalMinutes"] as? Int {
+            self.tempIntervalMinutes = interval
+        } else {
+            self.tempIntervalMinutes = d.object(forKey: "track.tempIntervalMinutes") != nil
+                ? d.integer(forKey: "track.tempIntervalMinutes") : 5
+        }
+
+        if let threshold = p?["tempElevationThreshold"] as? Int {
+            self.tempElevationThreshold = threshold
+        } else {
+            self.tempElevationThreshold = d.object(forKey: "track.tempElevationThreshold") != nil
+                ? d.integer(forKey: "track.tempElevationThreshold") : 100
+        }
+
+        // Persist iCloud values to UserDefaults so they survive even without iCloud
+        if p != nil { save() }
     }
 
     private func save() {

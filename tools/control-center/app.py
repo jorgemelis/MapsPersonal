@@ -9,6 +9,7 @@ from PySide6.QtGui import QIcon, QFont
 
 from track_manager import TrackManagerWidget
 from geology_manager import GeologyManagerWidget
+from settings_manager import SettingsManager
 
 
 class ControlCenter(QMainWindow):
@@ -52,6 +53,7 @@ class ControlCenter(QMainWindow):
 
         # Modules
         self.modules = []
+        self._add_module("Settings", SettingsManager())
         self._add_module("Tracks", TrackManagerWidget())
         self._add_module("HR Zones", self._placeholder("HR Zone Analysis", "Coming soon..."))
         self._add_module("Maps", self._placeholder("Map Manager", "Download and manage offline maps"))
