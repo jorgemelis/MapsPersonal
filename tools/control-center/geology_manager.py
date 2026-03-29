@@ -412,11 +412,12 @@ map.on('click', function(e) {
 class DownloadProcess:
     """Runs download_worker.py as a separate process to avoid WebEngine crashes."""
 
-    def __init__(self, source, min_lat, min_lon, max_lat, max_lon, output_path):
+    def __init__(self, source, min_lat, min_lon, max_lat, max_lon, output_path, friendly_name=None):
         self.source = source
         self.min_lat, self.min_lon = min_lat, min_lon
         self.max_lat, self.max_lon = max_lat, max_lon
         self.output_path = output_path
+        self.friendly_name = friendly_name
         self.process = None
 
     def start(self, on_progress, on_finished, timer_parent=None):
@@ -436,7 +437,7 @@ class DownloadProcess:
             "format": src.format,
             "wms_version": src.wms_version,
             "srs": src.srs,
-            "name": f"{src.name} ({src.scale})",
+            "name": self.friendly_name or f"{src.name} ({src.scale})",
             "attribution": src.attribution,
         })
 
@@ -836,7 +837,15 @@ class GeologyManagerWidget(QWidget):
             max_lon = lon + dlon
 
         LOCAL_MAPS_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"{src.id}_{lat:.2f}_{lon:.2f}_r{radius}km.mbtiles"
+        # Use search query as friendly name if available
+        place = self.search_input.text().strip()
+        if place:
+            safe_place = "".join(c if c.isalnum() or c in " -_" else "" for c in place).strip().replace(" ", "_")
+            filename = f"{src.id}_{safe_place}_r{radius}km.mbtiles"
+            friendly_name = f"Geología {place}"
+        else:
+            filename = f"{src.id}_{lat:.2f}_{lon:.2f}_r{radius}km.mbtiles"
+            friendly_name = f"{src.name} ({lat:.2f}, {lon:.2f})"
         output = str(LOCAL_MAPS_DIR / filename)
 
         total_est = count_tiles(min_lat, min_lon, max_lat, max_lon,
@@ -856,7 +865,8 @@ class GeologyManagerWidget(QWidget):
         self.cancel_btn.setEnabled(True)
 
         self.worker = DownloadProcess(src, min_lat, min_lon,
-                                      max_lat, max_lon, output)
+                                      max_lat, max_lon, output,
+                                      friendly_name=friendly_name)
         self.worker.start(self.on_progress, self.on_finished, timer_parent=self)
 
     def on_cancel(self):
