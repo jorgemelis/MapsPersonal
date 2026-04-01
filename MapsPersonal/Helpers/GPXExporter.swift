@@ -13,9 +13,10 @@ enum GPXExporter {
     static func export(track: GPXTrack, hrZones: HRZoneExportData? = nil) -> String {
         let iso = ISO8601DateFormatter()
         let hasHR = track.points.contains { $0.heartRate != nil }
-        let hasTemp = track.points.contains { $0.temperature != nil }
-        let hasMPExtensions = hasTemp || hrZones != nil
-        let hasExtensions = hasHR || hasTemp
+        let hasTemp = track.points.contains { $0.temperature != nil || $0.forecastHumidity != nil || $0.forecastPressure != nil }
+        let hasSensor = track.points.contains { $0.measuredTemperature != nil }
+        let hasMPExtensions = hasTemp || hasSensor || hrZones != nil
+        let hasExtensions = hasHR || hasTemp || hasSensor
 
         var gpx = """
         <?xml version="1.0" encoding="UTF-8"?>
@@ -35,8 +36,11 @@ enum GPXExporter {
         gpx += "  <metadata>\n"
         gpx += "    <name>\(escapeXML(track.name))</name>\n"
         gpx += "    <time>\(iso.string(from: track.startDate))</time>\n"
-        if hasTemp {
-            gpx += "    <desc>Temperature data is weather model forecast (Open-Meteo), not measured.</desc>\n"
+        if hasTemp || hasSensor {
+            var descParts: [String] = []
+            if hasTemp { descParts.append("mp:weather = Open-Meteo forecast") }
+            if hasSensor { descParts.append("mp:sensor = RuuviTag measured") }
+            gpx += "    <desc>Temperature sources: \(descParts.joined(separator: "; ")).</desc>\n"
         }
         gpx += "  </metadata>\n"
         gpx += "  <trk>\n"
@@ -67,17 +71,39 @@ enum GPXExporter {
                 gpx += "        <ele>\(String(format: "%.1f", ele))</ele>\n"
             }
             gpx += "        <time>\(iso.string(from: point.timestamp))</time>\n"
-            if hasExtensions && (point.heartRate != nil || point.temperature != nil) {
+            let hasPointExtensions = point.heartRate != nil || point.temperature != nil || point.forecastHumidity != nil || point.forecastPressure != nil || point.measuredTemperature != nil
+            if hasExtensions && hasPointExtensions {
                 gpx += "        <extensions>\n"
                 if let hr = point.heartRate {
                     gpx += "          <gpxtpx:TrackPointExtension>\n"
                     gpx += "            <gpxtpx:hr>\(hr)</gpxtpx:hr>\n"
                     gpx += "          </gpxtpx:TrackPointExtension>\n"
                 }
-                if let temp = point.temperature {
+                if point.temperature != nil || point.forecastHumidity != nil || point.forecastPressure != nil {
                     gpx += "          <mp:weather source=\"open-meteo\" type=\"forecast\">\n"
-                    gpx += "            <mp:temp_c>\(String(format: "%.1f", temp))</mp:temp_c>\n"
+                    if let temp = point.temperature {
+                        gpx += "            <mp:temp_c>\(String(format: "%.1f", temp))</mp:temp_c>\n"
+                    }
+                    if let hum = point.forecastHumidity {
+                        gpx += "            <mp:humidity_pct>\(String(format: "%.0f", hum))</mp:humidity_pct>\n"
+                    }
+                    if let pres = point.forecastPressure {
+                        gpx += "            <mp:pressure_hpa>\(String(format: "%.1f", pres))</mp:pressure_hpa>\n"
+                    }
                     gpx += "          </mp:weather>\n"
+                }
+                if point.measuredTemperature != nil || point.humidity != nil || point.pressure != nil {
+                    gpx += "          <mp:sensor source=\"ruuvitag\" type=\"measured\">\n"
+                    if let temp = point.measuredTemperature {
+                        gpx += "            <mp:temp_c>\(String(format: "%.2f", temp))</mp:temp_c>\n"
+                    }
+                    if let hum = point.humidity {
+                        gpx += "            <mp:humidity_pct>\(String(format: "%.2f", hum))</mp:humidity_pct>\n"
+                    }
+                    if let pres = point.pressure {
+                        gpx += "            <mp:pressure_hpa>\(String(format: "%.2f", pres))</mp:pressure_hpa>\n"
+                    }
+                    gpx += "          </mp:sensor>\n"
                 }
                 gpx += "        </extensions>\n"
             }

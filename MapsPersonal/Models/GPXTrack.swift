@@ -13,8 +13,20 @@ struct TrackPoint: Codable, Identifiable {
     var heartRate: Int?
     /// Temperature in °C from Open-Meteo weather model (forecast, not measured)
     var temperature: Double?
+    /// Humidity in % from Open-Meteo weather model (forecast)
+    var forecastHumidity: Double?
+    /// Surface pressure in hPa from Open-Meteo weather model (forecast)
+    var forecastPressure: Double?
+    /// Measured temperature in °C from RuuviTag sensor
+    var measuredTemperature: Double?
+    /// Measured relative humidity in % from RuuviTag sensor
+    var humidity: Double?
+    /// Measured atmospheric pressure in hPa from RuuviTag sensor
+    var pressure: Double?
 
-    init(location: CLLocation, heartRate: Int? = nil, temperature: Double? = nil) {
+    init(location: CLLocation, heartRate: Int? = nil, temperature: Double? = nil,
+         forecastHumidity: Double? = nil, forecastPressure: Double? = nil,
+         measuredTemperature: Double? = nil, humidity: Double? = nil, pressure: Double? = nil) {
         self.id = UUID()
         self.latitude = location.coordinate.latitude
         self.longitude = location.coordinate.longitude
@@ -22,6 +34,11 @@ struct TrackPoint: Codable, Identifiable {
         self.timestamp = location.timestamp
         self.heartRate = heartRate
         self.temperature = temperature
+        self.forecastHumidity = forecastHumidity
+        self.forecastPressure = forecastPressure
+        self.measuredTemperature = measuredTemperature
+        self.humidity = humidity
+        self.pressure = pressure
     }
 
     var coordinate: CLLocationCoordinate2D {

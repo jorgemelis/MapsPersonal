@@ -50,29 +50,6 @@ struct SettingsView: View {
 
                     Toggle("Peaks (OSM)", isOn: $mapState.showPeaks)
 
-                    Toggle("Hillshade", isOn: $mapState.showHillshade)
-                    if mapState.showHillshade {
-                        HStack {
-                            Text("Opacity")
-                                .font(.caption)
-                            Slider(value: $mapState.hillshadeOpacity, in: 0.1...1.0, step: 0.1)
-                            Text(String(format: "%.0f%%", mapState.hillshadeOpacity * 100))
-                                .font(.caption)
-                                .frame(width: 36, alignment: .trailing)
-                        }
-                    }
-
-                    Toggle("Contour Lines", isOn: $mapState.showContours)
-                    if mapState.showContours {
-                        HStack {
-                            Text("Opacity")
-                                .font(.caption)
-                            Slider(value: $mapState.contourOpacity, in: 0.1...1.0, step: 0.1)
-                            Text(String(format: "%.0f%%", mapState.contourOpacity * 100))
-                                .font(.caption)
-                                .frame(width: 36, alignment: .trailing)
-                        }
-                    }
                 } header: {
                     Text("Map")
                 }

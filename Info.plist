@@ -15,6 +15,8 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>MapsPersonal connects to RuuviTag sensors to record temperature, humidity, and pressure during track recording.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>MapsPersonal reads your heart rate during track recording to include it in GPX exports.</string>
 	<key>NSHealthUpdateUsageDescription</key>

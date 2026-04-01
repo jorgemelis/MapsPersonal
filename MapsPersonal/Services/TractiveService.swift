@@ -66,6 +66,7 @@ class TractiveService {
     private var channelTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
     private var liveRefreshTask: Task<Void, Never>?
+    private var pingTask: Task<Void, Never>?
 
     /// Map trackerId -> petId for quick lookup from channel events
     private var trackerToPet: [String: String] = [:]
@@ -99,8 +100,10 @@ class TractiveService {
         channelTask?.cancel()
         refreshTask?.cancel()
         liveRefreshTask?.cancel()
+        pingTask?.cancel()
         perPetLiveTask?.cancel()
         perPetLiveTask = nil
+        pingTask = nil
         token = nil
         pets.removeAll()
         isConnected = false
@@ -157,6 +160,9 @@ class TractiveService {
 
             // Wake trackers to get a fresh position (like the official app does)
             await requestFreshPositions()
+
+            // Start periodic pings to keep positions fresh
+            startPingMode()
         } catch {
             lastError = error.localizedDescription
             isConnected = false
@@ -193,6 +199,45 @@ class TractiveService {
     func stopAutoRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+    }
+
+    // MARK: - Ping Mode (periodic wake for fresh positions)
+
+    /// Start periodic pings: briefly wake trackers every 3 minutes to get fresh positions.
+    /// Skipped when LIVE tracking is already active (hike mode or per-pet LIVE).
+    func startPingMode() {
+        pingTask?.cancel()
+        pingTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(180))
+                guard !isLiveTracking,
+                      !pets.contains(where: { $0.isLive }),
+                      let token = self.token else { continue }
+
+                for pet in visiblePets {
+                    _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/on", token: token, method: "POST")
+                }
+                print("🐾 Ping: woke trackers, waiting for GPS fix...")
+
+                // Wait for GPS fix (warm start ~15-30s, but allow more margin)
+                try? await Task.sleep(for: .seconds(30))
+
+                // Fetch explicitly in case channel missed it
+                await refreshPositions()
+
+                // Turn LIVE back off to save tracker battery
+                for pet in visiblePets {
+                    _ = try? await request(path: "/tracker/\(pet.trackerId)/command/live_tracking/off", token: token, method: "POST")
+                }
+                print("🐾 Ping: trackers back to sleep")
+            }
+        }
+    }
+
+    /// Stop ping mode
+    func stopPingMode() {
+        pingTask?.cancel()
+        pingTask = nil
     }
 
     // MARK: - Event Channel (real-time updates)
@@ -400,8 +445,8 @@ class TractiveService {
             }
         }
 
-        // Wait for tracker to wake and send a position update via channel
-        try? await Task.sleep(for: .seconds(15))
+        // Wait for tracker to wake and acquire GPS fix (cold start can take 60-90s)
+        try? await Task.sleep(for: .seconds(60))
 
         // Fetch fresh positions explicitly in case channel didn't deliver
         await refreshPositions()
@@ -446,6 +491,7 @@ class TractiveService {
         }
 
         isLiveTracking = true
+        stopPingMode()  // LIVE is continuous now, no need for pings
         print("🐾 HIKE MODE ON")
 
         // Keep LIVE active by re-sending command every 2 minutes
@@ -476,6 +522,7 @@ class TractiveService {
         }
 
         isLiveTracking = false
+        startPingMode()  // Resume periodic pings
     }
 
     /// Get trail coordinates for a pet (for drawing polyline)

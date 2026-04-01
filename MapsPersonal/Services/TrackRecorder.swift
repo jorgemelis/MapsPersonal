@@ -1,6 +1,10 @@
 import Foundation
 import CoreLocation
 
+extension Notification.Name {
+    static let trackPointAdded = Notification.Name("trackPointAdded")
+}
+
 // MARK: - Track Recorder
 
 @Observable
@@ -11,12 +15,19 @@ class TrackRecorder {
     var isRecording = false
     var currentTrack: GPXTrack?
     var trackVersion = 0  // increments on each new point, triggers map redraw
+
+    /// Kalman-filtered coordinates for smooth polyline visualization
+    var smoothedCoordinates: [CLLocationCoordinate2D] = []
+    private var kalmanFilter = KalmanGPSFilter()
     var pointCount: Int { currentTrack?.points.count ?? 0 }
     var totalDistance: CLLocationDistance { currentTrack?.totalDistance ?? 0 }
     var duration: TimeInterval { currentTrack?.duration ?? 0 }
 
     /// Current temperature from weather model (for display in stats bar)
     var currentTemperature: Double?
+
+    /// Whether a RuuviTag sensor is currently connected (for UI indicator)
+    var isRuuviTagConnected: Bool { ruuviTagService?.isConnected ?? false }
 
     /// HR zone time distribution (seconds per zone, 0-indexed)
     var zoneTimeDistribution: [TimeInterval] = Array(repeating: 0, count: 5)
@@ -43,6 +54,7 @@ class TrackRecorder {
     private var lastTempElevation: Double?
     private var cumulativeElevationChange: Double = 0
     private var weatherService: WeatherService?
+    private var ruuviTagService: RuuviTagService?
 
     init(locationService: LocationService) {
         self.locationService = locationService
@@ -51,6 +63,11 @@ class TrackRecorder {
     /// Set the weather service to enable temperature recording
     func setWeatherService(_ service: WeatherService) {
         self.weatherService = service
+    }
+
+    /// Set the RuuviTag service to enable measured sensor data recording
+    func setRuuviTagService(_ service: RuuviTagService) {
+        self.ruuviTagService = service
     }
 
     /// Set the user profile for HR zone tracking
@@ -63,6 +80,10 @@ class TrackRecorder {
         isRecording = true
         locationService.enableRecordingMode()
 
+        // Reset Kalman filter and smoothed coordinates
+        kalmanFilter.reset()
+        smoothedCoordinates = []
+
         // Reset temperature tracking state
         lastTempFetchTime = nil
         lastTempElevation = nil
@@ -73,6 +94,9 @@ class TrackRecorder {
         zoneTimeDistribution = Array(repeating: 0, count: userProfile?.zones.count ?? 5)
         currentZoneIndex = nil
         lastZoneUpdateTime = nil
+
+        // Start RuuviTag BLE scanning if service is configured
+        ruuviTagService?.startScanning()
 
         // Request HealthKit permission and start HR monitoring
         if heartRateService.isAvailable {
@@ -94,6 +118,7 @@ class TrackRecorder {
         locationService.disableRecordingMode()
         locationService.onLocationUpdate = nil
         heartRateService.stopMonitoring()
+        ruuviTagService?.stopScanning()
 
         // Save recovery snapshot when stopping (in case user doesn't save immediately)
         if let track = currentTrack, !track.points.isEmpty {
@@ -146,6 +171,7 @@ class TrackRecorder {
 
         let saved = track
         currentTrack = nil
+        smoothedCoordinates = []
         Self.deleteRecoveryFile()
         return saved
     }
@@ -199,6 +225,7 @@ class TrackRecorder {
     func discardTrack() {
         stopRecording()
         currentTrack = nil
+        smoothedCoordinates = []
         Self.deleteRecoveryFile()
     }
 
@@ -207,10 +234,11 @@ class TrackRecorder {
         guard location.horizontalAccuracy <= minAccuracy else { return }
         guard location.horizontalAccuracy >= 0 else { return }
 
-        // Check if we should fetch a new temperature reading
-        let temp = shouldFetchTemperature(elevation: location.altitude)
-            ? weatherService?.temperature
-            : nil
+        // Check if we should fetch a new weather reading
+        let shouldFetch = shouldFetchTemperature(elevation: location.altitude)
+        let temp = shouldFetch ? weatherService?.temperature : nil
+        let forecastHum = shouldFetch ? weatherService?.humidity.map { Double($0) } : nil
+        let forecastPres = shouldFetch ? weatherService?.pressure : nil
 
         if let temp {
             currentTemperature = temp
@@ -223,13 +251,29 @@ class TrackRecorder {
         let hr = heartRateService.currentHeartRate
         updateZoneTracking(heartRate: hr, at: location.timestamp)
 
+        // Capture RuuviTag sensor data if available
+        let measuredTemp = ruuviTagService?.isConnected == true ? ruuviTagService?.temperature : nil
+        let measuredHumidity = ruuviTagService?.isConnected == true ? ruuviTagService?.humidity : nil
+        let measuredPressure = ruuviTagService?.isConnected == true ? ruuviTagService?.pressure : nil
+
         let point = TrackPoint(
             location: location,
             heartRate: hr,
-            temperature: temp
+            temperature: temp,
+            forecastHumidity: forecastHum,
+            forecastPressure: forecastPres,
+            measuredTemperature: measuredTemp,
+            humidity: measuredHumidity,
+            pressure: measuredPressure
         )
         currentTrack?.points.append(point)
+
+        // Kalman-filtered coordinate for smooth polyline display
+        let smoothed = kalmanFilter.filter(location)
+        smoothedCoordinates.append(smoothed)
+
         trackVersion += 1
+        NotificationCenter.default.post(name: .trackPointAdded, object: self)
 
         // Auto-save recovery file periodically
         if let track = currentTrack, track.points.count % autoSaveInterval == 0 {

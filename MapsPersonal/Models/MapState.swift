@@ -26,18 +26,6 @@ class MapState {
     }
 
     // Terrain overlays
-    var showHillshade = false {
-        didSet { save(); terrainVersion += 1 }
-    }
-    var hillshadeOpacity: Double = 0.5 {
-        didSet { save(); terrainVersion += 1 }
-    }
-    var showContours = false {
-        didSet { save(); terrainVersion += 1 }
-    }
-    var contourOpacity: Double = 0.6 {
-        didSet { save(); terrainVersion += 1 }
-    }
     var showPeaks = false {
         didSet { save(); terrainVersion += 1 }
     }
@@ -106,10 +94,6 @@ class MapState {
         zoomLevel = 6.0
         bearing = 0.0
         pitch = 0.0
-        showHillshade = false
-        hillshadeOpacity = 0.5
-        showContours = false
-        contourOpacity = 0.6
         showPeaks = false
         isSaving = false
 
@@ -120,7 +104,8 @@ class MapState {
                      "map.lat", "map.lon", "map.zoom",
                      "map.bearing", "map.pitch",
                      "map.showHillshade", "map.hillshadeOpacity",
-                     "map.showContours", "map.contourOpacity"] {
+                     "map.showContours", "map.contourOpacity",
+                     "map.showPeaks"] {
             d.removeObject(forKey: key)
         }
     }
@@ -161,10 +146,6 @@ class MapState {
         d.set(dynamicOverlayOpacity, forKey: "map.dynamicOverlayOpacity")
 
         // Terrain overlays
-        d.set(showHillshade, forKey: "map.showHillshade")
-        d.set(hillshadeOpacity, forKey: "map.hillshadeOpacity")
-        d.set(showContours, forKey: "map.showContours")
-        d.set(contourOpacity, forKey: "map.contourOpacity")
         d.set(showPeaks, forKey: "map.showPeaks")
     }
 
@@ -215,14 +196,6 @@ class MapState {
         pitch = d.double(forKey: "map.pitch")
 
         // Terrain overlays
-        showHillshade = d.bool(forKey: "map.showHillshade")
-        if d.object(forKey: "map.hillshadeOpacity") != nil {
-            hillshadeOpacity = d.double(forKey: "map.hillshadeOpacity")
-        }
-        showContours = d.bool(forKey: "map.showContours")
-        if d.object(forKey: "map.contourOpacity") != nil {
-            contourOpacity = d.double(forKey: "map.contourOpacity")
-        }
         showPeaks = d.bool(forKey: "map.showPeaks")
     }
 }

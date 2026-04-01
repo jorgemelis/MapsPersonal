@@ -23,6 +23,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             mapView.styleURL = styleURL
         }
 
+        context.coordinator.mapViewRef = mapView
         mapView.delegate = context.coordinator
         mapView.showsUserLocation = mapState.showsUserLocation
         mapView.compassView.isHidden = true
@@ -78,8 +79,11 @@ struct MapViewRepresentable: UIViewRepresentable {
         // Sync layers when style is loaded
         if let style = mapView.style {
             context.coordinator.syncLayers(style: style, state: mapState)
-            context.coordinator.syncTrackOverlay(mapView: mapView, recorder: trackRecorder)
+            context.coordinator.syncTrackOverlay(mapView: mapView, style: style, recorder: trackRecorder)
             context.coordinator.syncPeaks(mapView: mapView, style: style, state: mapState, peakService: peakService)
+        } else {
+            // Track overlay via annotations as fallback before style loads
+            context.coordinator.syncTrackOverlayAnnotation(mapView: mapView, recorder: trackRecorder)
         }
 
         // Sync pet annotations (independent of style)
@@ -93,16 +97,6 @@ struct MapViewRepresentable: UIViewRepresentable {
     // MARK: - Coordinator
 
     class Coordinator: NSObject, MLNMapViewDelegate {
-        static let mapTilerKey: String = {
-            guard let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
-                  let data = try? Data(contentsOf: url),
-                  let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-                  let key = dict["MapTilerAPIKey"] as? String else {
-                return ""
-            }
-            return key
-        }()
-
         let parent: MapViewRepresentable
         private var currentBaseLayer: MapLayer?
         private var currentOverlays: Set<MapLayer> = []
@@ -110,19 +104,37 @@ struct MapViewRepresentable: UIViewRepresentable {
         private var trackAnnotation: MLNPolyline?
         private var petAnnotations: [String: MLNPointAnnotation] = [:]
         private var petTrailAnnotations: [String: MLNPolyline] = [:]
-        private var hillshadeActive = false
-        private var contoursActive = false
         private var peaksActive = false
+        weak var mapViewRef: MLNMapView?
 
         init(parent: MapViewRepresentable) {
             self.parent = parent
+            super.init()
+
+            // Listen for track point additions to update polyline directly
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleTrackPointAdded(_:)),
+                name: .trackPointAdded,
+                object: nil
+            )
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+
+        @objc private func handleTrackPointAdded(_ notification: Notification) {
+            guard let mapView = mapViewRef,
+                  let style = mapView.style,
+                  let recorder = notification.object as? TrackRecorder else { return }
+            syncTrackOverlay(mapView: mapView, style: style, recorder: recorder)
         }
 
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+            self.mapViewRef = mapView
             syncLayers(style: style, state: parent.mapState)
-            // Sync track overlay once style is ready (fixes polyline not appearing
-            // when recording starts before style finishes loading)
-            syncTrackOverlay(mapView: mapView, recorder: parent.trackRecorder)
+            syncTrackOverlay(mapView: mapView, style: style, recorder: parent.trackRecorder)
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
@@ -268,9 +280,8 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Sync dynamic offline layers
             syncDynamicLayers(style: style, state: state)
 
-            // Sync terrain layers
-            syncHillshade(style: style, state: state)
-            syncContours(style: style, state: state)
+            // Clean up legacy terrain layers if still present
+            cleanupLegacyTerrainLayers(style: style)
         }
 
         private func syncDynamicLayers(style: MLNStyle, state: MapState) {
@@ -336,137 +347,25 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
 
-        // MARK: - Hillshade
+        // MARK: - Legacy Terrain Cleanup
 
-        func syncHillshade(style: MLNStyle, state: MapState) {
-            if state.showHillshade && !hillshadeActive {
-                // Add DEM source (AWS Terrain Tiles, free, Terrarium encoding)
-                let demSource = MLNRasterDEMSource(
-                    identifier: "terrain-dem",
-                    tileURLTemplates: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-                    options: [
-                        .tileSize: NSNumber(value: 256),
-                        .maximumZoomLevel: NSNumber(value: 15)
-                    ]
-                )
-                style.addSource(demSource)
-
-                let layer = MLNHillshadeStyleLayer(identifier: "hillshade-layer", source: demSource)
-                layer.hillshadeExaggeration = NSExpression(forConstantValue: NSNumber(value: state.hillshadeOpacity))
-                layer.hillshadeIlluminationDirection = NSExpression(forConstantValue: NSNumber(value: 335))
-                layer.hillshadeShadowColor = NSExpression(forConstantValue: UIColor.black.withAlphaComponent(0.15))
-                layer.hillshadeHighlightColor = NSExpression(forConstantValue: UIColor.white.withAlphaComponent(0.1))
-                layer.hillshadeAccentColor = NSExpression(forConstantValue: UIColor.black.withAlphaComponent(0.05))
-
-                // Insert just above the base layer
-                if let baseLayers = style.layers.first(where: { $0.identifier.hasSuffix("-layer") }) {
-                    style.insertLayer(layer, above: baseLayers)
-                } else {
-                    style.addLayer(layer)
-                }
-                hillshadeActive = true
-
-            } else if !state.showHillshade && hillshadeActive {
-                if let layer = style.layer(withIdentifier: "hillshade-layer") {
+        /// Remove hillshade/contour layers from previous sessions (one-time cleanup)
+        private func cleanupLegacyTerrainLayers(style: MLNStyle) {
+            // Hillshade
+            if let layer = style.layer(withIdentifier: "hillshade-layer") {
+                style.removeLayer(layer)
+            }
+            if let source = style.source(withIdentifier: "terrain-dem") {
+                style.removeSource(source)
+            }
+            // Contours
+            for id in ["contour-labels", "contour-major", "contour-minor"] {
+                if let layer = style.layer(withIdentifier: id) {
                     style.removeLayer(layer)
                 }
-                if let source = style.source(withIdentifier: "terrain-dem") {
-                    style.removeSource(source)
-                }
-                hillshadeActive = false
             }
-
-            // Update opacity
-            if hillshadeActive, let layer = style.layer(withIdentifier: "hillshade-layer") as? MLNHillshadeStyleLayer {
-                layer.hillshadeExaggeration = NSExpression(forConstantValue: NSNumber(value: state.hillshadeOpacity))
-            }
-        }
-
-        // MARK: - Contour Lines
-
-        func syncContours(style: MLNStyle, state: MapState) {
-            let key = Self.mapTilerKey
-            if key.isEmpty { print("⚠️ MapTiler API key is empty - Secrets.plist not loaded"); return }
-
-            if state.showContours && !contoursActive {
-                // Guard against duplicate source
-                if style.source(withIdentifier: "contours-source") != nil {
-                    print("📍 Contour source already exists, skipping add")
-                    contoursActive = true
-                    return
-                }
-                let url = "https://api.maptiler.com/tiles/contours-v2/{z}/{x}/{y}.pbf?key=\(key)"
-                print("📍 Adding contour source: \(url)")
-                let source = MLNVectorTileSource(
-                    identifier: "contours-source",
-                    tileURLTemplates: [url],
-                    options: [
-                        .minimumZoomLevel: NSNumber(value: 9),
-                        .maximumZoomLevel: NSNumber(value: 14)
-                    ]
-                )
-                style.addSource(source)
-                print("📍 Contour source added, layers: \(style.layers.map { $0.identifier })")
-
-                // Minor contour lines
-                let minorLines = MLNLineStyleLayer(identifier: "contour-minor", source: source)
-                minorLines.sourceLayerIdentifier = "contour"
-                minorLines.predicate = NSPredicate(format: "nth_line < 5")
-                minorLines.lineColor = NSExpression(forConstantValue: UIColor(red: 1.0, green: 0.85, blue: 0.5, alpha: 0.6))
-                minorLines.lineWidth = NSExpression(forConstantValue: NSNumber(value: 0.8))
-                minorLines.minimumZoomLevel = 12
-                style.addLayer(minorLines)
-
-                // Index (major) contour lines - nth_line >= 5
-                let majorLines = MLNLineStyleLayer(identifier: "contour-major", source: source)
-                majorLines.sourceLayerIdentifier = "contour"
-                majorLines.predicate = NSPredicate(format: "nth_line >= 5")
-                majorLines.lineColor = NSExpression(forConstantValue: UIColor(red: 1.0, green: 0.75, blue: 0.3, alpha: 0.9))
-                majorLines.lineWidth = NSExpression(forConstantValue: NSNumber(value: 1.5))
-                majorLines.minimumZoomLevel = 9
-                style.addLayer(majorLines)
-
-                // Elevation labels on major contours
-                let labels = MLNSymbolStyleLayer(identifier: "contour-labels", source: source)
-                labels.sourceLayerIdentifier = "contour"
-                labels.predicate = NSPredicate(format: "nth_line >= 5")
-                labels.text = NSExpression(forKeyPath: "height")
-                labels.symbolPlacement = NSExpression(forConstantValue: "line")
-                labels.textFontSize = NSExpression(forConstantValue: NSNumber(value: 11))
-                labels.textColor = NSExpression(forConstantValue: UIColor(red: 1.0, green: 0.85, blue: 0.4, alpha: 1.0))
-                labels.textHaloColor = NSExpression(forConstantValue: UIColor.black.withAlphaComponent(0.7))
-                labels.textHaloWidth = NSExpression(forConstantValue: NSNumber(value: 1.5))
-                labels.minimumZoomLevel = 12
-                style.addLayer(labels)
-
-                contoursActive = true
-
-            } else if !state.showContours && contoursActive {
-                for id in ["contour-labels", "contour-major", "contour-minor"] {
-                    if let layer = style.layer(withIdentifier: id) {
-                        style.removeLayer(layer)
-                    }
-                }
-                if let source = style.source(withIdentifier: "contours-source") {
-                    style.removeSource(source)
-                }
-                contoursActive = false
-            }
-
-            // Update opacity
-            if contoursActive {
-                let alpha = state.contourOpacity
-                if let minor = style.layer(withIdentifier: "contour-minor") as? MLNLineStyleLayer {
-                    minor.lineColor = NSExpression(forConstantValue: UIColor(red: 1.0, green: 0.85, blue: 0.5, alpha: alpha * 0.7))
-                    minor.lineWidth = NSExpression(forConstantValue: NSNumber(value: 0.4 + alpha * 0.8))
-                }
-                if let major = style.layer(withIdentifier: "contour-major") as? MLNLineStyleLayer {
-                    major.lineColor = NSExpression(forConstantValue: UIColor(red: 1.0, green: 0.75, blue: 0.3, alpha: alpha))
-                    major.lineWidth = NSExpression(forConstantValue: NSNumber(value: 0.8 + alpha * 1.5))
-                }
-                if let labels = style.layer(withIdentifier: "contour-labels") as? MLNSymbolStyleLayer {
-                    labels.textColor = NSExpression(forConstantValue: UIColor(red: 1.0, green: 0.85, blue: 0.4, alpha: alpha))
-                }
+            if let source = style.source(withIdentifier: "contours-source") {
+                style.removeSource(source)
             }
         }
 
@@ -556,16 +455,60 @@ struct MapViewRepresentable: UIViewRepresentable {
             style.addLayer(labels)
         }
 
-        // MARK: - Track Overlay
+        // MARK: - Track Overlay (Shape Source + Line Layer for reliability)
 
-        func syncTrackOverlay(mapView: MLNMapView, recorder: TrackRecorder) {
-            // Remove old track line
+        private static let trackSourceId = "user-track-source"
+        private static let trackLayerId = "user-track-layer"
+
+        func syncTrackOverlay(mapView: MLNMapView, style: MLNStyle, recorder: TrackRecorder) {
+            // Remove annotation-based fallback if it exists
             if let existing = trackAnnotation {
                 mapView.removeAnnotation(existing)
                 trackAnnotation = nil
             }
 
-            // Draw current track
+            // Use Kalman-filtered coordinates for smooth display, fall back to raw
+            var coords = recorder.smoothedCoordinates.count > 1
+                ? recorder.smoothedCoordinates
+                : recorder.currentTrack?.coordinates ?? []
+
+            guard coords.count > 1 else {
+                // No track: remove source/layer if present
+                if let layer = style.layer(withIdentifier: Self.trackLayerId) {
+                    style.removeLayer(layer)
+                }
+                if let source = style.source(withIdentifier: Self.trackSourceId) {
+                    style.removeSource(source)
+                }
+                return
+            }
+
+            let polyline = MLNPolylineFeature(coordinates: &coords, count: UInt(coords.count))
+
+            if let existingSource = style.source(withIdentifier: Self.trackSourceId) as? MLNShapeSource {
+                // Update existing source data (efficient — no remove/add)
+                existingSource.shape = polyline
+            } else {
+                // Create source + layer for the first time
+                let source = MLNShapeSource(identifier: Self.trackSourceId, shape: polyline, options: nil)
+                style.addSource(source)
+
+                let layer = MLNLineStyleLayer(identifier: Self.trackLayerId, source: source)
+                layer.lineColor = NSExpression(forConstantValue: UIColor.systemRed)
+                layer.lineWidth = NSExpression(forConstantValue: NSNumber(value: 3.0))
+                layer.lineJoin = NSExpression(forConstantValue: "round")
+                layer.lineCap = NSExpression(forConstantValue: "round")
+                style.addLayer(layer)
+            }
+        }
+
+        /// Fallback: annotation-based track overlay (used before style loads)
+        func syncTrackOverlayAnnotation(mapView: MLNMapView, recorder: TrackRecorder) {
+            if let existing = trackAnnotation {
+                mapView.removeAnnotation(existing)
+                trackAnnotation = nil
+            }
+
             guard let track = recorder.currentTrack, track.points.count > 1 else { return }
             var coords = track.coordinates
             let polyline = MLNPolyline(coordinates: &coords, count: UInt(coords.count))

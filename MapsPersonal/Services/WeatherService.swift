@@ -10,6 +10,7 @@ struct WeatherData {
     var precipitationProbability: Int
     var humidity: Int
     var windSpeed: Double
+    var pressure: Double        // surface pressure in hPa
     var weatherCode: Int
     var isDay: Bool
     var hourlyForecast: [HourlyForecastItem]
@@ -41,6 +42,7 @@ class WeatherService {
     var precipitationProbability: Int?
     var humidity: Int?
     var windSpeed: Double?
+    var pressure: Double?       // surface pressure in hPa
     var weatherCode: Int?
     var isDay: Bool = true
     var hourlyForecast: [HourlyForecastItem] = []
@@ -75,6 +77,7 @@ class WeatherService {
                 uvIndex = data.uvIndex
                 humidity = data.humidity
                 windSpeed = data.windSpeed
+                pressure = data.pressure
                 weatherCode = data.weatherCode
                 isDay = data.isDay
                 precipitationProbability = data.precipitationProbability
@@ -165,7 +168,7 @@ struct OpenMeteoProvider: WeatherProvider {
     func fetchWeather(for location: CLLocationCoordinate2D) async throws -> WeatherData {
         let lat = location.latitude
         let lon = location.longitude
-        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,uv_index,is_day&hourly=temperature_2m,precipitation_probability,weather_code,uv_index,wind_speed_10m,is_day&forecast_hours=24&timezone=auto"
+        let urlString = "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,relative_humidity_2m,surface_pressure,weather_code,wind_speed_10m,uv_index,is_day&hourly=temperature_2m,precipitation_probability,weather_code,uv_index,wind_speed_10m,is_day&forecast_hours=24&timezone=auto"
 
         guard let url = URL(string: urlString) else {
             throw URLError(.badURL)
@@ -210,6 +213,7 @@ struct OpenMeteoProvider: WeatherProvider {
             precipitationProbability: response.hourly.precipitation_probability.first ?? 0,
             humidity: Int(response.current.relative_humidity_2m),
             windSpeed: response.current.wind_speed_10m,
+            pressure: response.current.surface_pressure,
             weatherCode: Int(response.current.weather_code),
             isDay: response.current.is_day == 1,
             hourlyForecast: hourly
@@ -224,6 +228,7 @@ private struct OpenMeteoResponse: Decodable {
     struct CurrentWeather: Decodable {
         let temperature_2m: Double
         let relative_humidity_2m: Double
+        let surface_pressure: Double
         let weather_code: Double
         let wind_speed_10m: Double
         let uv_index: Double

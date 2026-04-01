@@ -18,6 +18,11 @@ struct TrackStatsView: View {
                     Text("GRABANDO")
                         .font(.caption.bold())
                         .foregroundStyle(.red)
+                    if recorder.isRuuviTagConnected {
+                        Image(systemName: "sensor.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.green)
+                    }
                 }
                 Spacer()
                 Text("\(recorder.pointCount) pts")
@@ -145,9 +150,9 @@ struct TrackStatsView: View {
 struct TrackStatsCompactView: View {
     let recorder: TrackRecorder
     var onStop: (() -> Void)? = nil
-    var onSave: (() -> Void)? = nil
     var onDiscard: (() -> Void)? = nil
 
+    @State private var showStopAlert = false
     @State private var showDiscardAlert = false
 
     var body: some View {
@@ -166,8 +171,9 @@ struct TrackStatsCompactView: View {
 
                 Spacer()
 
+                // Stop requires confirmation to prevent pocket presses
                 Button {
-                    onStop?()
+                    showStopAlert = true
                 } label: {
                     Image(systemName: "stop.fill")
                         .font(.caption)
@@ -176,22 +182,19 @@ struct TrackStatsCompactView: View {
                         .background(.red.opacity(0.15), in: Circle())
                 }
             } else if recorder.currentTrack != nil {
-                // Stopped: summary + save/discard
+                // Stopped & saved: show summary + discard option
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.caption)
                 Text("\(recorder.pointCount) pts")
                 Text(formatDistance(track?.totalDistance ?? 0))
                 Text(formatElevation(track?.elevationGain))
 
                 Spacer()
 
-                Button {
-                    onSave?()
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                        .font(.caption)
-                        .foregroundStyle(.green)
-                        .padding(6)
-                        .background(.green.opacity(0.15), in: Circle())
-                }
+                Text("Guardado")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
 
                 Button {
                     showDiscardAlert = true
@@ -208,13 +211,22 @@ struct TrackStatsCompactView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .alert("Descartar track", isPresented: $showDiscardAlert) {
+        .alert("Parar grabación", isPresented: $showStopAlert) {
+            Button("Guardar") {
+                onStop?()
+            }
             Button("Descartar", role: .destructive) {
+                onDiscard?()
+            }
+            Button("Seguir grabando", role: .cancel) {}
+        }
+        .alert("Borrar track", isPresented: $showDiscardAlert) {
+            Button("Borrar", role: .destructive) {
                 onDiscard?()
             }
             Button("Cancelar", role: .cancel) {}
         } message: {
-            Text("¿Seguro? Se perderá el track grabado.")
+            Text("¿Seguro? Se eliminará el track guardado.")
         }
     }
 

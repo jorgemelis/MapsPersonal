@@ -20,10 +20,12 @@ struct ContentView: View {
     @State private var showLegends = false
     @State private var showHelp = false
     @State private var shareFileURL: URL?
+    @State private var showSaveConfirmation = false
     @State private var coordinateText = ""
     @State private var mapBearing: Double = 0
     @State private var mapPitch: Double = 0
     @State private var tractive = TractiveService()
+    @State private var ruuviTag = RuuviTagService()
     @State private var peakService = PeakService()
     @State private var showSearch = false
     @State private var searchText = ""
@@ -169,15 +171,18 @@ struct ContentView: View {
                             if tractive.isLiveTracking {
                                 Task { await tractive.stopHikeMode() }
                             }
-                        },
-                        onSave: {
+                            // Auto-save immediately on stop
                             if let track = recorder.saveTrack() {
                                 mapState.savedTracks.append(track)
-                                shareFileURL = recorder.lastSavedFileURL
+                                showSaveConfirmation = true
                             }
                             showStats = false
                         },
                         onDiscard: {
+                            // Delete the already-saved GPX file, then discard
+                            if let url = recorder.lastSavedFileURL {
+                                TrackRecorder.deleteFile(at: url)
+                            }
                             recorder.discardTrack()
                             showStats = false
                         }
@@ -344,6 +349,8 @@ struct ContentView: View {
             trackRecorder = TrackRecorder(locationService: locationService)
             trackRecorder?.setWeatherService(weather)
             trackRecorder?.setUserProfile(userProfile)
+            trackRecorder?.setRuuviTagService(ruuviTag)
+            ruuviTag.startScanning()
             locationService.requestAuthorization()
             offlineMaps.scan()
             autoActivateMaps()
@@ -384,6 +391,30 @@ struct ContentView: View {
             )
             .presentationDetents([.medium, .large])
         }
+        .overlay {
+            if showSaveConfirmation {
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Track guardado")
+                            .font(.subheadline.bold())
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.bottom, 120)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .onAppear {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        withAnimation { showSaveConfirmation = false }
+                    }
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: showSaveConfirmation)
         .sheet(isPresented: Binding(
             get: { shareFileURL != nil },
             set: { if !$0 { shareFileURL = nil } }
