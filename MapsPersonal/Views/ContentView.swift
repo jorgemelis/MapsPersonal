@@ -444,6 +444,15 @@ struct ContentView: View {
                 .presentationDetents([.large])
         }
         .alert("Track sin guardar", isPresented: $showRecoveryAlert) {
+            if canResumeRecoveredTrack {
+                Button("Continuar grabando") {
+                    if let track = recoveredTrack, let recorder = trackRecorder {
+                        recorder.resumeRecording(from: track)
+                        TrackRecorder.deleteRecoveryFile()
+                    }
+                    recoveredTrack = nil
+                }
+            }
             Button("Guardar") {
                 if let track = recoveredTrack, let recorder = trackRecorder {
                     recorder.currentTrack = track
@@ -459,7 +468,12 @@ struct ContentView: View {
             }
         } message: {
             if let track = recoveredTrack {
-                Text("Se encontró un track con \(track.points.count) puntos del \(track.startDate.formatted(date: .abbreviated, time: .shortened)). ¿Guardar?")
+                let elapsed = Int(Date().timeIntervalSince(track.points.last?.timestamp ?? track.startDate) / 60)
+                if canResumeRecoveredTrack {
+                    Text("Track con \(track.points.count) puntos, interrumpido hace \(elapsed) min. ¿Continuar grabando?")
+                } else {
+                    Text("Se encontró un track con \(track.points.count) puntos del \(track.startDate.formatted(date: .abbreviated, time: .shortened)).")
+                }
             }
         }
     }
@@ -490,6 +504,24 @@ struct ContentView: View {
                 mapState.dynamicOfflineLayers[map.id] = url
             }
         }
+    }
+
+    /// Whether the recovered track is recent enough to resume (< 30 min gap, < 1km distance)
+    private var canResumeRecoveredTrack: Bool {
+        guard let track = recoveredTrack,
+              let lastPoint = track.points.last else { return false }
+
+        let elapsed = Date().timeIntervalSince(lastPoint.timestamp)
+        guard elapsed < 30 * 60 else { return false }  // max 30 min gap
+
+        // Check distance if we have current location
+        if let currentLoc = locationService.currentLocation {
+            let lastLoc = CLLocation(latitude: lastPoint.latitude, longitude: lastPoint.longitude)
+            let distance = currentLoc.distance(from: lastLoc)
+            guard distance < 1000 else { return false }  // max 1km away
+        }
+
+        return true
     }
 }
 

@@ -7,6 +7,8 @@ import HealthKit
 class HeartRateService {
     private let healthStore = HKHealthStore()
     private var query: HKAnchoredObjectQuery?
+    private var workoutBuilder: HKWorkoutBuilder?
+    private var workoutStartDate: Date?
 
     /// Most recent heart rate in BPM, updated live during recording
     var currentHeartRate: Int?
@@ -45,6 +47,24 @@ class HeartRateService {
     func startMonitoring() {
         guard isAvailable else { return }
 
+        // Start a workout builder to trigger continuous HR from Apple Watch
+        let configuration = HKWorkoutConfiguration()
+        configuration.activityType = .hiking
+        configuration.locationType = .outdoor
+
+        let builder = HKWorkoutBuilder(healthStore: healthStore, configuration: configuration, device: nil)
+        Task {
+            do {
+                try await builder.beginCollection(at: Date())
+                workoutBuilder = builder
+                workoutStartDate = Date()
+                print("HeartRateService: workout session started for continuous HR")
+            } catch {
+                print("HeartRateService: failed to start workout: \(error)")
+            }
+        }
+
+        // Listen for HR samples
         let hrType = HKQuantityType.quantityType(forIdentifier: .heartRate)!
 
         let query = HKAnchoredObjectQuery(
@@ -97,7 +117,7 @@ class HeartRateService {
 
     // MARK: - Save Workout to Health
 
-    /// Save a hiking workout to HealthKit after track recording
+    /// Finish the active workout and save it to HealthKit
     func saveWorkout(
         start: Date,
         end: Date,
@@ -106,15 +126,24 @@ class HeartRateService {
     ) async -> Bool {
         guard isAvailable else { return false }
 
-        let configuration = HKWorkoutConfiguration()
-        configuration.activityType = .hiking
-        configuration.locationType = .outdoor
-
-        let builder = HKWorkoutBuilder(healthStore: healthStore, configuration: configuration, device: nil)
+        // Use the active builder if available, otherwise create a new one
+        let builder: HKWorkoutBuilder
+        if let active = workoutBuilder {
+            builder = active
+        } else {
+            let configuration = HKWorkoutConfiguration()
+            configuration.activityType = .hiking
+            configuration.locationType = .outdoor
+            builder = HKWorkoutBuilder(healthStore: healthStore, configuration: configuration, device: nil)
+            do {
+                try await builder.beginCollection(at: start)
+            } catch {
+                print("HeartRateService: Failed to begin collection: \(error)")
+                return false
+            }
+        }
 
         do {
-            try await builder.beginCollection(at: start)
-
             // Add distance sample
             if distance > 0 {
                 let distanceType = HKQuantityType.quantityType(forIdentifier: .distanceWalkingRunning)!
@@ -143,11 +172,16 @@ class HeartRateService {
             try await builder.endCollection(at: end)
             try await builder.finishWorkout()
 
+            workoutBuilder = nil
+            workoutStartDate = nil
+
             print("HeartRateService: Workout saved to Health (\(String(format: "%.1f", distance))m, \(String(format: "%.0f", elevationGain))m gain)")
             return true
         } catch {
             print("HeartRateService: Failed to save workout: \(error)")
             try? await builder.endCollection(at: end)
+            workoutBuilder = nil
+            workoutStartDate = nil
             return false
         }
     }

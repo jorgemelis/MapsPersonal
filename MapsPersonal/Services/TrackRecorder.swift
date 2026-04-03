@@ -75,6 +75,45 @@ class TrackRecorder {
         self.userProfile = profile
     }
 
+    /// Resume recording from a recovered track
+    func resumeRecording(from track: GPXTrack) {
+        currentTrack = track
+        isRecording = true
+        locationService.enableRecordingMode()
+
+        // Rebuild smoothed coordinates from existing points
+        kalmanFilter.reset()
+        smoothedCoordinates = track.coordinates
+
+        // Restore temperature state
+        lastTempFetchTime = track.points.last?.timestamp
+        lastTempElevation = track.points.last?.elevation
+        cumulativeElevationChange = 0
+        currentTemperature = weatherService?.temperature
+
+        // Reset HR zone tracking (starts fresh from resume point)
+        zoneTimeDistribution = Array(repeating: 0, count: userProfile?.zones.count ?? 5)
+        currentZoneIndex = nil
+        lastZoneUpdateTime = nil
+
+        ruuviTagService?.startScanning()
+
+        if heartRateService.isAvailable {
+            Task {
+                if !heartRateService.isAuthorized {
+                    _ = await heartRateService.requestAuthorization()
+                }
+                heartRateService.startMonitoring()
+            }
+        }
+
+        locationService.onLocationUpdate = { [weak self] location in
+            self?.addPoint(location)
+        }
+
+        print("TrackRecorder: resumed recording with \(track.points.count) existing points")
+    }
+
     func startRecording() {
         currentTrack = GPXTrack()
         isRecording = true
