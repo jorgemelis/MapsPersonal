@@ -304,65 +304,92 @@ struct TrackAnalysisView: View {
     // MARK: - Sensor Comparison
 
     private var sensorSection: some View {
-        let forecastTemps = track.points.compactMap { $0.temperature }
-        let measuredTemps = track.points.compactMap { $0.measuredTemperature }
-        let measuredHum = track.points.compactMap { $0.humidity }
-        let measuredPres = track.points.compactMap { $0.pressure }
-        let forecastPres = track.points.compactMap { $0.forecastPressure }
+        // Skip first 20 minutes of sensor data (thermal stabilization)
+        let stabilizationTime: TimeInterval = 20 * 60
+        let startTime = track.points.first?.timestamp ?? Date()
+        let stabilized = track.points.filter {
+            $0.timestamp.timeIntervalSince(startTime) >= stabilizationTime
+        }
 
-        let avgForecast = forecastTemps.isEmpty ? nil : forecastTemps.reduce(0, +) / Double(forecastTemps.count)
-        let avgMeasured = measuredTemps.isEmpty ? nil : measuredTemps.reduce(0, +) / Double(measuredTemps.count)
-        let avgHumidity = measuredHum.isEmpty ? nil : measuredHum.reduce(0, +) / Double(measuredHum.count)
-        let avgMeasPres = measuredPres.isEmpty ? nil : measuredPres.reduce(0, +) / Double(measuredPres.count)
-        let avgForePres = forecastPres.isEmpty ? nil : forecastPres.reduce(0, +) / Double(forecastPres.count)
+        // Forecast averages (from stabilized range, or all if no stabilized sensor data)
+        let forecastTemps = stabilized.compactMap { $0.temperature }
+        let forecastHum = stabilized.compactMap { $0.forecastHumidity }
+        let forecastPres = stabilized.compactMap { $0.forecastPressure }
+
+        // Measured averages (from stabilized range only)
+        let measuredTemps = stabilized.compactMap { $0.measuredTemperature }
+        let measuredHum = stabilized.compactMap { $0.humidity }
+        let measuredPres = stabilized.compactMap { $0.pressure }
+
+        func avg(_ values: [Double]) -> Double? {
+            values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
+        }
+
+        let avgForecastT = avg(forecastTemps)
+        let avgMeasuredT = avg(measuredTemps)
+        let avgForecastH = avg(forecastHum)
+        let avgMeasuredH = avg(measuredHum)
+        let avgForecastP = avg(forecastPres)
+        let avgMeasuredP = avg(measuredPres)
+
+        let skippedMinutes = Int(stabilizationTime / 60)
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("Datos ambientales")
                 .font(.headline)
+            if !measuredTemps.isEmpty {
+                Text("Primeros \(skippedMinutes) min excluidos (estabilización)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             HStack(spacing: 0) {
-                Text("").frame(width: 90, alignment: .leading)
-                Text("Forecast").frame(width: 80, alignment: .trailing)
-                Text("Medido").frame(width: 80, alignment: .trailing)
+                Text("").frame(width: 80, alignment: .leading)
+                Text("Forecast").frame(width: 75, alignment: .trailing)
+                Text("Medido").frame(width: 75, alignment: .trailing)
                 Text("Diff").frame(width: 60, alignment: .trailing)
             }
             .font(.caption.bold())
             .foregroundStyle(.secondary)
 
-            if let fc = avgForecast, let ms = avgMeasured {
+            if let fc = avgForecastT, let ms = avgMeasuredT {
                 comparisonRow("Temp °C",
                               String(format: "%.1f", fc),
                               String(format: "%.1f", ms),
                               diff: ms - fc)
             }
-            if let fp = avgForePres, let mp = avgMeasPres {
-                comparisonRow("Presión hPa",
-                              String(format: "%.0f", fp),
-                              String(format: "%.0f", mp),
-                              diff: mp - fp)
+            if let fh = avgForecastH, let mh = avgMeasuredH {
+                comparisonRow("Humedad %",
+                              String(format: "%.0f", fh),
+                              String(format: "%.0f", mh),
+                              diff: mh - fh)
+            } else if let mh = avgMeasuredH {
+                comparisonRow("Humedad %", "--", String(format: "%.0f", mh), diff: nil)
             }
-            if let hum = avgHumidity {
-                HStack(spacing: 0) {
-                    Text("Humedad %").frame(width: 90, alignment: .leading)
-                    Text("--").frame(width: 80, alignment: .trailing).foregroundStyle(.secondary)
-                    Text(String(format: "%.0f", hum)).frame(width: 80, alignment: .trailing)
-                    Text("").frame(width: 60)
-                }
-                .font(.system(.caption, design: .monospaced))
+            if let fp = avgForecastP, let mp = avgMeasuredP {
+                comparisonRow("Presión hPa",
+                              String(format: "%.1f", fp),
+                              String(format: "%.1f", mp),
+                              diff: mp - fp)
             }
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
     }
 
-    private func comparisonRow(_ label: String, _ forecast: String, _ measured: String, diff: Double) -> some View {
+    private func comparisonRow(_ label: String, _ forecast: String, _ measured: String, diff: Double?) -> some View {
         HStack(spacing: 0) {
-            Text(label).frame(width: 90, alignment: .leading)
-            Text(forecast).frame(width: 80, alignment: .trailing)
-            Text(measured).frame(width: 80, alignment: .trailing)
-            Text(String(format: "%+.1f", diff))
-                .frame(width: 60, alignment: .trailing)
-                .foregroundStyle(abs(diff) < 1 ? .green : abs(diff) < 3 ? .orange : .red)
+            Text(label).frame(width: 80, alignment: .leading)
+            Text(forecast).frame(width: 75, alignment: .trailing)
+                .foregroundStyle(forecast == "--" ? .secondary : .primary)
+            Text(measured).frame(width: 75, alignment: .trailing)
+            if let diff {
+                Text(String(format: "%+.1f", diff))
+                    .frame(width: 60, alignment: .trailing)
+                    .foregroundStyle(abs(diff) < 1 ? .green : abs(diff) < 3 ? .orange : .red)
+            } else {
+                Text("").frame(width: 60)
+            }
         }
         .font(.system(.caption, design: .monospaced))
     }
@@ -448,10 +475,10 @@ struct TrackAnalysisView: View {
             sampleIndices.append(points.count - 1)
         }
 
-        let geocoder = CLGeocoder()
         var seen = Set<String>()
         var ordered: [String] = []
 
+        let geocoder = CLGeocoder()
         for idx in sampleIndices {
             let p = points[idx]
             let location = CLLocation(latitude: p.latitude, longitude: p.longitude)
