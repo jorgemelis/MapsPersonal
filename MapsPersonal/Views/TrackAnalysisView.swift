@@ -1,6 +1,5 @@
 import SwiftUI
 import Charts
-import CoreLocation
 
 // MARK: - Track Analysis View
 
@@ -478,18 +477,12 @@ struct TrackAnalysisView: View {
         var seen = Set<String>()
         var ordered: [String] = []
 
-        let geocoder = CLGeocoder()
         for idx in sampleIndices {
             let p = points[idx]
-            let location = CLLocation(latitude: p.latitude, longitude: p.longitude)
-            do {
-                let placemarks = try await geocoder.reverseGeocodeLocation(location)
-                if let name = placemarks.first?.locality, !seen.contains(name) {
-                    seen.insert(name)
-                    ordered.append(name)
-                }
-            } catch {
-                continue
+            if let name = await GeocodingService.reverseLocality(latitude: p.latitude, longitude: p.longitude),
+               !seen.contains(name) {
+                seen.insert(name)
+                ordered.append(name)
             }
         }
 

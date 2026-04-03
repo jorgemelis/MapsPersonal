@@ -34,10 +34,39 @@ enum GeocodingService {
             return []
         }
     }
+    /// Reverse geocode a coordinate to get the locality (municipality) name
+    static func reverseLocality(latitude: Double, longitude: Double) async -> String? {
+        guard let url = URL(string: "https://nominatim.openstreetmap.org/reverse?lat=\(latitude)&lon=\(longitude)&format=json&zoom=10") else { return nil }
+
+        var request = URLRequest(url: url)
+        request.setValue("MapsPersonal/1.0", forHTTPHeaderField: "User-Agent")
+
+        do {
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let result = try JSONDecoder().decode(NominatimReverseResult.self, from: data)
+            return result.address?.city
+                ?? result.address?.town
+                ?? result.address?.village
+                ?? result.address?.municipality
+        } catch {
+            return nil
+        }
+    }
 }
 
 private struct NominatimResult: Decodable {
     let lat: String
     let lon: String
     let display_name: String
+}
+
+private struct NominatimReverseResult: Decodable {
+    let address: NominatimAddress?
+}
+
+private struct NominatimAddress: Decodable {
+    let city: String?
+    let town: String?
+    let village: String?
+    let municipality: String?
 }

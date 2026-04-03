@@ -1,5 +1,4 @@
 import SwiftUI
-import CoreLocation
 
 // MARK: - Track Manager
 
@@ -187,10 +186,7 @@ private struct TrackRowView: View {
         .padding(.vertical, 4)
         .task {
             guard locality == nil, let first = track.points.first else { return }
-            let location = CLLocation(latitude: first.latitude, longitude: first.longitude)
-            if let placemark = try? await CLGeocoder().reverseGeocodeLocation(location).first {
-                locality = placemark.locality
-            }
+            locality = await GeocodingService.reverseLocality(latitude: first.latitude, longitude: first.longitude)
         }
     }
 
@@ -220,4 +216,5 @@ private struct TrackRowView: View {
     private func formatElevation(_ meters: Double) -> String {
         String(format: "+%.0fm", meters)
     }
+
 }
